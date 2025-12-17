@@ -1,0 +1,17 @@
+# Python
+__pycache__
+*.pyc
+backend/.venv
+backend/payments.log
+
+# Android/Gradle
+android/.idea
+android/.gradle
+android/local.properties
+android/app/build/
+android/build/
+android/gradle/wrapper/gradle-wrapper.jar
+*.keystore
+
+# OS
+.DS_Store
