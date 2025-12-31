@@ -7,6 +7,7 @@ from flask_cors import CORS
 import stripe
 
 from auth import authenticate_request
+from device_registry import get_device_registry
 from errors import APIError, handle_errors, validate_amount_cents
 from users import Role, get_user_store
 
@@ -48,8 +49,23 @@ def create_payment_intent():
     amount_cents = validate_amount_cents(payload.get("amount_cents"))
     currency = payload.get("currency", "eur")
     item = payload.get("item", "unknown")
-    device = payload.get("device", "unknown")
-    kassierer = user.name
+    device = payload.get("device") or payload.get("android_id") or payload.get("device_id")
+    if not isinstance(device, str) or not device.strip():
+        raise APIError("device ist erforderlich", 400)
+
+    registry = get_device_registry()
+    assignment = registry.get_device(device)
+    if not assignment:
+        raise APIError("Gerät ist nicht registriert", 403)
+
+    store = get_user_store()
+    assigned_user = store.get_by_id(assignment.user_id)
+    if not assigned_user:
+        raise APIError("Zugeordneter Benutzer existiert nicht", 400)
+    if assigned_user.id != user.id:
+        raise APIError("Gerät gehört nicht zum angemeldeten Benutzer", 403)
+
+    kassierer = assigned_user.name
 
     description = "DARC e.V. OV L11 Getränke"
     metadata = {
@@ -57,6 +73,8 @@ def create_payment_intent():
         "item": str(item),
         "kassierer": str(kassierer),
         "device": str(device),
+        "user_id": str(assigned_user.id),
+        "role": assigned_user.role.value,
     }
 
     intent = stripe.PaymentIntent.create(
@@ -72,6 +90,55 @@ def create_payment_intent():
         "client_secret": intent.client_secret,
         "amount_cents": intent.amount,
     })
+
+
+@app.route("/admin/devices", methods=["POST"])
+@handle_errors
+def assign_device():
+    authenticate_request(request, require_admin=True)
+    payload = request.get_json(force=True, silent=True) or {}
+    device_id = payload.get("device_id") or payload.get("device") or payload.get("android_id")
+    user_id = payload.get("user_id")
+
+    if not isinstance(device_id, str) or not device_id.strip():
+        raise APIError("device_id ist erforderlich", 400)
+    try:
+        user_id_value = int(user_id)
+    except (TypeError, ValueError):
+        raise APIError("user_id muss eine ganze Zahl sein", 400)
+
+    store = get_user_store()
+    user = store.get_by_id(user_id_value)
+    if not user:
+        raise APIError("User nicht gefunden", 404)
+
+    registry = get_device_registry()
+    assignment = registry.assign_device(device_id=device_id, user_id=user.id)
+    return jsonify({
+        "device_id": assignment.device_id,
+        "user_id": assignment.user_id,
+        "role": user.role.value,
+        "name": user.name,
+    }), 201
+
+
+@app.route("/admin/devices", methods=["GET"])
+@handle_errors
+def list_devices():
+    authenticate_request(request, require_admin=True)
+    registry = get_device_registry()
+    store = get_user_store()
+    devices = []
+    for assignment in registry.list_devices():
+        user = store.get_by_id(assignment.user_id)
+        devices.append({
+            "device_id": assignment.device_id,
+            "user_id": assignment.user_id,
+            "name": user.name if user else None,
+            "role": user.role.value if user else None,
+            "active": user.active if user else None,
+        })
+    return jsonify({"devices": devices})
 
 
 @app.route("/admin/users", methods=["POST"])

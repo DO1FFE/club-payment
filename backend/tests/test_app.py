@@ -18,9 +18,11 @@ def app_module(monkeypatch):
         sys.path.insert(0, str(backend_root))
 
     import app as app
+    import device_registry as device_registry
     import users as users
 
     importlib.reload(app)
+    importlib.reload(device_registry)
     importlib.reload(users)
     return app
 
@@ -52,6 +54,13 @@ def test_connection_token_success(client, monkeypatch):
 def test_create_payment_intent_success(client, monkeypatch):
     test_client, app_module = client
 
+    register_response = test_client.post(
+        "/admin/devices",
+        json={"device_id": "device1", "user_id": 1},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert register_response.status_code == 201
+
     class DummyIntent:
         def __init__(self):
             self.id = "pi_123"
@@ -63,6 +72,9 @@ def test_create_payment_intent_success(client, monkeypatch):
         assert kwargs["currency"] == "eur"
         assert kwargs["metadata"]["item"] == "Cola"
         assert kwargs["metadata"]["kassierer"] == "Admin Nutzer"
+        assert kwargs["metadata"]["user_id"] == "1"
+        assert kwargs["metadata"]["role"] == "admin"
+        assert kwargs["metadata"]["device"] == "device1"
         return DummyIntent()
 
     monkeypatch.setattr(app_module.stripe.PaymentIntent, "create", staticmethod(fake_create))
@@ -82,9 +94,15 @@ def test_create_payment_intent_success(client, monkeypatch):
 
 def test_create_payment_intent_validation(client):
     test_client, _ = client
+    register_response = test_client.post(
+        "/admin/devices",
+        json={"device_id": "device2", "user_id": 1},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert register_response.status_code == 201
     response = test_client.post(
         "/pos/create_intent",
-        json={"amount_cents": 0},
+        json={"amount_cents": 0, "device": "device2"},
         headers={"Authorization": "Bearer admin-token"},
     )
     assert response.status_code == 400
@@ -128,6 +146,34 @@ def test_admin_user_flow(client):
     )
     assert patch_response.status_code == 200
     assert patch_response.get_json()["active"] is False
+
+
+def test_admin_device_flow(client):
+    test_client, _ = client
+
+    create_response = test_client.post(
+        "/admin/users",
+        json={"name": "Kassierer 2", "role": "kassierer"},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert create_response.status_code == 201
+    user_id = create_response.get_json()["id"]
+
+    register_response = test_client.post(
+        "/admin/devices",
+        json={"device_id": "kasse-02", "user_id": user_id},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert register_response.status_code == 201
+    assert register_response.get_json()["device_id"] == "kasse-02"
+
+    list_response = test_client.get(
+        "/admin/devices",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert list_response.status_code == 200
+    devices = list_response.get_json()["devices"]
+    assert any(device["device_id"] == "kasse-02" for device in devices)
 
 
 def test_webhook_invalid_signature(client, monkeypatch):
