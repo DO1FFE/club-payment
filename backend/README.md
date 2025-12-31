@@ -40,10 +40,19 @@ python app.py
 ## Endpoints
 
 - `POST /terminal/connection_token` → returns `{ "secret": "..." }` for Stripe Terminal SDK
-- `POST /pos/create_intent` → body `{ "amount_cents": 150, "currency": "eur", "item": "Cola/Bier", "kassierer": "Dienst 1", "device": "Pixel" }`, returns PaymentIntent details
+- `POST /pos/create_intent` → benötigt `Authorization: Bearer <token>`, body `{ "amount_cents": 150, "currency": "eur", "item": "Cola/Bier", "device": "Pixel" }`, Kassierer wird serverseitig aus dem Token gesetzt
 - `POST /webhook` (optional) → verifies Stripe signature and appends event info to `payments.log`
+- `POST /admin/users` → benötigt Admin-Token, legt Nutzer an (`name`, `role`, optional `active`, `api_token`) und liefert `api_token` zurück
+- `GET /admin/users` → benötigt Admin-Token, listet Nutzer
+- `PATCH /admin/users/<id>` → benötigt Admin-Token, ändert `name`, `role` und/oder `active`
 
 Errors are returned as JSON with an `error` key and HTTP status code.
+
+## Authentifizierung
+
+Die API erwartet `Authorization: Bearer <token>` für alle geschützten Endpunkte. Ein initialer Admin kann über
+`ADMIN_API_TOKEN` und optional `ADMIN_NAME` (Umgebungsvariablen) bereitgestellt werden. Tokens werden serverseitig
+für neue Nutzer generiert, wenn kein `api_token` übergeben wird.
 
 ## Notes
 
