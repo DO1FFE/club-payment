@@ -45,6 +45,8 @@ python app.py
 - `POST /admin/users` → benötigt Admin-Token, legt Nutzer an (`name`, `role`, optional `active`, `api_token`) und liefert `api_token` zurück
 - `GET /admin/users` → benötigt Admin-Token, listet Nutzer
 - `PATCH /admin/users/<id>` → benötigt Admin-Token, ändert `name`, `role` und/oder `active`
+- `POST /admin/devices` → benötigt Admin-Token, weist ein Gerät einem Nutzer zu (`device_id`, `user_id`)
+- `GET /admin/devices` → benötigt Admin-Token, listet Gerätezuordnungen
 
 Errors are returned as JSON with an `error` key and HTTP status code.
 
@@ -53,6 +55,13 @@ Errors are returned as JSON with an `error` key and HTTP status code.
 Die API erwartet `Authorization: Bearer <token>` für alle geschützten Endpunkte. Ein initialer Admin kann über
 `ADMIN_API_TOKEN` und optional `ADMIN_NAME` (Umgebungsvariablen) bereitgestellt werden. Tokens werden serverseitig
 für neue Nutzer generiert, wenn kein `api_token` übergeben wird.
+
+## Geräte-Registrierung
+
+Geräte müssen vor dem Bezahlen registriert werden. Registrierungen erfolgen ausschließlich serverseitig über
+`POST /admin/devices` mit `device_id` (z. B. Android-ID) und `user_id`. Beim Aufruf von
+`POST /pos/create_intent` wird geprüft, ob das Gerät registriert ist und ob die Zuordnung zum angemeldeten
+Benutzer passt. Die Zuordnung wird zusätzlich als `user_id` und `role` in der PaymentIntent-Metadata gespeichert.
 
 ## Notes
 
