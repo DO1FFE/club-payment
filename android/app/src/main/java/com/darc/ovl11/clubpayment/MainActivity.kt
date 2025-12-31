@@ -13,11 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenu
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -31,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -42,13 +39,24 @@ import java.text.NumberFormat
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+    private val authStore by lazy { AuthStore(applicationContext) }
+    private val backendService by lazy { provideBackendService(BuildConfig.BACKEND_BASE_URL, authStore) }
+    private val terminalManager by lazy { TerminalManager(applicationContext, backendService) }
+
     private val viewModel: PaymentViewModel by viewModels {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                val backend = provideBackendService(BuildConfig.BACKEND_BASE_URL)
-                val manager = TerminalManager(applicationContext, backend)
                 @Suppress("UNCHECKED_CAST")
-                return PaymentViewModel(manager) as T
+                return PaymentViewModel(terminalManager, authStore) as T
+            }
+        }
+    }
+
+    private val authViewModel: AuthViewModel by viewModels {
+        object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return AuthViewModel(authStore, backendService) as T
             }
         }
     }
@@ -57,26 +65,31 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                PaymentScreen(viewModel)
+                AppContent(viewModel, authViewModel)
             }
         }
     }
 }
 
-class PaymentViewModel(private val terminalManager: TerminalManager) : ViewModel() {
+class PaymentViewModel(
+    private val terminalManager: TerminalManager,
+    private val authStore: AuthStore,
+) : ViewModel() {
     private val _status = MutableStateFlow<PaymentStatus>(PaymentStatus.Idle)
     val status: StateFlow<PaymentStatus> = _status
 
-    private val kassiererList = listOf("Dienst 1", "Dienst 2", "Erik")
     val deviceName: String = terminalManager.readableDeviceName()
 
-    fun kassiererOptions(): List<String> = kassiererList + deviceName
-
-    fun startPayment(amountCents: Int, itemLabel: String, kassierer: String) {
+    fun startPayment(amountCents: Int, itemLabel: String) {
         viewModelScope.launch {
             try {
+                val userName = authStore.currentUserName()
+                if (userName.isNullOrBlank()) {
+                    _status.value = PaymentStatus.Error("Bitte zuerst anmelden")
+                    return@launch
+                }
                 _status.value = PaymentStatus.CreatingIntent
-                val intent = terminalManager.createIntent(amountCents, itemLabel, kassierer, deviceName)
+                val intent = terminalManager.createIntent(amountCents, itemLabel, userName, deviceName)
                 _status.value = PaymentStatus.WaitingForTap
                 val collected = terminalManager.collectPayment(intent)
                 _status.value = PaymentStatus.Processing
@@ -91,11 +104,68 @@ class PaymentViewModel(private val terminalManager: TerminalManager) : ViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PaymentScreen(viewModel: PaymentViewModel) {
-    val kassiererOptions = remember { viewModel.kassiererOptions() }
+fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
+    val authState by authViewModel.authState.collectAsState()
 
+    if (authState == null) {
+        LoginScreen(authViewModel)
+    } else {
+        PaymentScreen(
+            viewModel = viewModel,
+            userName = authState?.userName.orEmpty(),
+            onLogout = { authViewModel.logout() }
+        )
+    }
+}
+
+@Composable
+fun LoginScreen(authViewModel: AuthViewModel) {
+    var userName by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val loginStatus by authViewModel.loginStatus.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(text = "Gerät anmelden", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            value = userName,
+            onValueChange = { userName = it },
+            label = { Text("Benutzername") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Passwort") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Button(
+            onClick = { authViewModel.login(userName.trim(), password) },
+            enabled = userName.isNotBlank() && password.isNotBlank() && loginStatus !is LoginStatus.Loading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Anmelden")
+        }
+        if (loginStatus is LoginStatus.Error) {
+            Text(
+                text = "Fehler: ${(loginStatus as LoginStatus.Error).message}",
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PaymentScreen(viewModel: PaymentViewModel, userName: String, onLogout: () -> Unit) {
     var freeAmountText by remember { mutableStateOf("") }
-    var kassiererSelection by remember { mutableStateOf(kassiererOptions.first()) }
 
     val status by viewModel.status.collectAsState()
 
@@ -105,14 +175,26 @@ fun PaymentScreen(viewModel: PaymentViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(text = "DARC e.V. OV L11 – Getränke", style = MaterialTheme.typography.headlineSmall)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = "DARC e.V. OV L11 – Getränke", style = MaterialTheme.typography.headlineSmall)
+                Text(text = "Angemeldet als $userName", style = MaterialTheme.typography.bodyMedium)
+            }
+            Button(onClick = onLogout) {
+                Text("Abmelden")
+            }
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            PriceButton("Cola/Bier", 150) { viewModel.startPayment(150, "Cola/Bier", kassiererSelection) }
-            PriceButton("Wasser", 50) { viewModel.startPayment(50, "Wasser", kassiererSelection) }
+            PriceButton("Cola/Bier", 150) { viewModel.startPayment(150, "Cola/Bier") }
+            PriceButton("Wasser", 50) { viewModel.startPayment(50, "Wasser") }
         }
 
         OutlinedTextField(
@@ -125,16 +207,10 @@ fun PaymentScreen(viewModel: PaymentViewModel) {
             colors = TextFieldDefaults.outlinedTextFieldColors()
         )
 
-        KassiererDropdown(
-            options = kassiererOptions,
-            selected = kassiererSelection,
-            onSelect = { kassiererSelection = it }
-        )
-
         Button(
             onClick = {
                 parseAmountToCents(freeAmountText)?.let { cents ->
-                    viewModel.startPayment(cents, "Freier Betrag", kassiererSelection)
+                    viewModel.startPayment(cents, "Freier Betrag")
                 }
             },
             enabled = parseAmountToCents(freeAmountText) != null,
@@ -155,30 +231,6 @@ fun PriceButton(label: String, amountCents: Int, onClick: () -> Unit) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(text = label)
             Text(text = amountFormatted, style = MaterialTheme.typography.titleMedium)
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun KassiererDropdown(options: List<String>, selected: String, onSelect: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
-        OutlinedTextField(
-            value = selected,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("Kassierer") },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth()
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
-                DropdownMenuItem(text = { Text(option) }, onClick = {
-                    onSelect(option)
-                    expanded = false
-                })
-            }
         }
     }
 }
