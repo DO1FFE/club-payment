@@ -1,4 +1,6 @@
 import importlib
+from pathlib import Path
+import sys
 
 import pytest
 
@@ -8,10 +10,18 @@ def app_module(monkeypatch):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost")
+    monkeypatch.setenv("ADMIN_API_TOKEN", "admin-token")
+    monkeypatch.setenv("ADMIN_NAME", "Admin Nutzer")
 
-    import backend.app as app
+    backend_root = Path(__file__).resolve().parents[1]
+    if str(backend_root) not in sys.path:
+        sys.path.insert(0, str(backend_root))
+
+    import app as app
+    import users as users
 
     importlib.reload(app)
+    importlib.reload(users)
     return app
 
 
@@ -52,6 +62,7 @@ def test_create_payment_intent_success(client, monkeypatch):
         assert kwargs["amount"] == 500
         assert kwargs["currency"] == "eur"
         assert kwargs["metadata"]["item"] == "Cola"
+        assert kwargs["metadata"]["kassierer"] == "Admin Nutzer"
         return DummyIntent()
 
     monkeypatch.setattr(app_module.stripe.PaymentIntent, "create", staticmethod(fake_create))
@@ -59,6 +70,7 @@ def test_create_payment_intent_success(client, monkeypatch):
     response = test_client.post(
         "/pos/create_intent",
         json={"amount_cents": 500, "item": "Cola", "kassierer": "Erik", "device": "device1"},
+        headers={"Authorization": "Bearer admin-token"},
     )
 
     assert response.status_code == 200
@@ -70,9 +82,52 @@ def test_create_payment_intent_success(client, monkeypatch):
 
 def test_create_payment_intent_validation(client):
     test_client, _ = client
-    response = test_client.post("/pos/create_intent", json={"amount_cents": 0})
+    response = test_client.post(
+        "/pos/create_intent",
+        json={"amount_cents": 0},
+        headers={"Authorization": "Bearer admin-token"},
+    )
     assert response.status_code == 400
-    assert "greater than zero" in response.get_json()["error"]
+    assert "größer als Null" in response.get_json()["error"]
+
+
+def test_create_payment_intent_requires_auth(client):
+    test_client, _ = client
+    response = test_client.post("/pos/create_intent", json={"amount_cents": 200})
+    assert response.status_code == 401
+    assert response.get_json()["error"] == "Authorization-Header fehlt"
+
+
+def test_admin_user_flow(client):
+    test_client, _ = client
+
+    create_response = test_client.post(
+        "/admin/users",
+        json={"name": "Kassierer 1", "role": "kassierer"},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert create_response.status_code == 201
+    created = create_response.get_json()
+    assert created["name"] == "Kassierer 1"
+    assert created["role"] == "kassierer"
+    assert created["active"] is True
+    assert created["api_token"]
+
+    list_response = test_client.get(
+        "/admin/users",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert list_response.status_code == 200
+    users = list_response.get_json()["users"]
+    assert any(user["name"] == "Kassierer 1" for user in users)
+
+    patch_response = test_client.patch(
+        f"/admin/users/{created['id']}",
+        json={"active": False},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert patch_response.status_code == 200
+    assert patch_response.get_json()["active"] is False
 
 
 def test_webhook_invalid_signature(client, monkeypatch):

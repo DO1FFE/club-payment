@@ -1,12 +1,14 @@
 import logging
 import os
-from functools import wraps
-from typing import Any, Dict
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import stripe
+
+from auth import authenticate_request
+from errors import APIError, handle_errors, validate_amount_cents
+from users import Role, get_user_store
 
 load_dotenv()
 
@@ -31,43 +33,6 @@ CORS(app, origins=allowed_origins or "*")
 WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 
-class APIError(Exception):
-    def __init__(self, message: str, status_code: int = 400, extra: Dict[str, Any] | None = None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.extra = extra or {}
-
-
-def handle_errors(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except APIError as api_err:
-            logger.warning("API error: %s", api_err)
-            response = {"error": str(api_err)}
-            response.update(api_err.extra)
-            return jsonify(response), api_err.status_code
-        except stripe.error.StripeError as err:
-            logger.exception("Stripe error while processing request")
-            return jsonify({"error": str(err)}), 500
-        except Exception as err:  # noqa: BLE001
-            logger.exception("Unhandled error")
-            return jsonify({"error": "Internal server error"}), 500
-
-    return wrapper
-
-
-def validate_amount_cents(amount_cents: Any) -> int:
-    try:
-        value = int(amount_cents)
-    except (TypeError, ValueError):
-        raise APIError("amount_cents must be an integer representing cents", 400)
-    if value <= 0:
-        raise APIError("amount_cents must be greater than zero", 400)
-    return value
-
-
 @app.route("/terminal/connection_token", methods=["POST"])
 @handle_errors
 def create_connection_token():
@@ -78,12 +43,13 @@ def create_connection_token():
 @app.route("/pos/create_intent", methods=["POST"])
 @handle_errors
 def create_payment_intent():
+    user = authenticate_request(request)
     payload = request.get_json(force=True, silent=True) or {}
     amount_cents = validate_amount_cents(payload.get("amount_cents"))
     currency = payload.get("currency", "eur")
     item = payload.get("item", "unknown")
-    kassierer = payload.get("kassierer", "unbekannt")
     device = payload.get("device", "unknown")
+    kassierer = user.name
 
     description = "DARC e.V. OV L11 Getränke"
     metadata = {
@@ -105,6 +71,82 @@ def create_payment_intent():
         "id": intent.id,
         "client_secret": intent.client_secret,
         "amount_cents": intent.amount,
+    })
+
+
+@app.route("/admin/users", methods=["POST"])
+@handle_errors
+def create_user():
+    authenticate_request(request, require_admin=True)
+    payload = request.get_json(force=True, silent=True) or {}
+    name = payload.get("name")
+    role_value = payload.get("role")
+    active = payload.get("active", True)
+    api_token = payload.get("api_token")
+
+    if not isinstance(name, str) or not name.strip():
+        raise APIError("name ist erforderlich", 400)
+    if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
+        raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
+    if not isinstance(active, bool):
+        raise APIError("active muss ein boolescher Wert sein", 400)
+
+    store = get_user_store()
+    user = store.create_user(name=name.strip(), role=Role(role_value), active=active, api_token=api_token)
+    return jsonify({
+        "id": user.id,
+        "name": user.name,
+        "role": user.role.value,
+        "active": user.active,
+        "api_token": user.api_token,
+    }), 201
+
+
+@app.route("/admin/users", methods=["GET"])
+@handle_errors
+def list_users():
+    authenticate_request(request, require_admin=True)
+    store = get_user_store()
+    users = [
+        {"id": user.id, "name": user.name, "role": user.role.value, "active": user.active}
+        for user in store.list_users()
+    ]
+    return jsonify({"users": users})
+
+
+@app.route("/admin/users/<int:user_id>", methods=["PATCH"])
+@handle_errors
+def update_user(user_id: int):
+    authenticate_request(request, require_admin=True)
+    payload = request.get_json(force=True, silent=True) or {}
+    name = payload.get("name")
+    role_value = payload.get("role")
+    active = payload.get("active")
+
+    role = None
+    if role_value is not None:
+        if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
+            raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
+        role = Role(role_value)
+    if active is not None and not isinstance(active, bool):
+        raise APIError("active muss ein boolescher Wert sein", 400)
+    if name is not None and (not isinstance(name, str) or not name.strip()):
+        raise APIError("name darf nicht leer sein", 400)
+
+    store = get_user_store()
+    user = store.update_user(
+        user_id=user_id,
+        name=name.strip() if isinstance(name, str) else None,
+        role=role,
+        active=active,
+    )
+    if not user:
+        raise APIError("User nicht gefunden", 404)
+    return jsonify({
+        "id": user.id,
+        "name": user.name,
+        "role": user.role.value,
+        "active": user.active,
     })
 
 
