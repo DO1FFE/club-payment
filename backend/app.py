@@ -3,6 +3,8 @@ import os
 from functools import wraps
 from typing import Any, Dict
 
+from device_registry import get_device, list_devices, register_device
+
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -68,6 +70,28 @@ def validate_amount_cents(amount_cents: Any) -> int:
     return value
 
 
+def get_authenticated_user() -> Dict[str, str]:
+    user_id = request.headers.get("X-User-Id")
+    role = request.headers.get("X-User-Role")
+    if not user_id or not role:
+        raise APIError("Authentifizierung erforderlich.", 401)
+    return {"user_id": user_id, "role": role}
+
+
+def require_admin() -> Dict[str, str]:
+    auth = get_authenticated_user()
+    if auth["role"] != "admin":
+        raise APIError("Adminrechte erforderlich.", 403)
+    return auth
+
+
+def parse_required_string(payload: Dict[str, Any], field: str) -> str:
+    value = payload.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise APIError(f"{field} fehlt oder ist ungültig.", 400)
+    return value.strip()
+
+
 @app.route("/terminal/connection_token", methods=["POST"])
 @handle_errors
 def create_connection_token():
@@ -75,15 +99,48 @@ def create_connection_token():
     return jsonify({"secret": token.secret})
 
 
+@app.route("/admin/devices", methods=["POST"])
+@handle_errors
+def assign_device():
+    require_admin()
+    payload = request.get_json(force=True, silent=True) or {}
+    device_id = parse_required_string(payload, "device_id")
+    user_id = parse_required_string(payload, "user_id")
+    role = parse_required_string(payload, "role")
+
+    register_device(device_id=device_id, user_id=user_id, role=role)
+    return jsonify({"device_id": device_id, "user_id": user_id, "role": role}), 201
+
+
+@app.route("/admin/devices", methods=["GET"])
+@handle_errors
+def list_device_assignments():
+    require_admin()
+    devices = [
+        {"device_id": assignment.device_id, "user_id": assignment.user_id, "role": assignment.role}
+        for assignment in list_devices()
+    ]
+    return jsonify({"devices": devices})
+
+
 @app.route("/pos/create_intent", methods=["POST"])
 @handle_errors
 def create_payment_intent():
+    auth = get_authenticated_user()
     payload = request.get_json(force=True, silent=True) or {}
     amount_cents = validate_amount_cents(payload.get("amount_cents"))
     currency = payload.get("currency", "eur")
     item = payload.get("item", "unknown")
     kassierer = payload.get("kassierer", "unbekannt")
-    device = payload.get("device", "unknown")
+    device = payload.get("android_id") or payload.get("device")
+    if not device:
+        raise APIError("Gerät fehlt.", 400)
+
+    assignment = get_device(str(device))
+    if assignment is None:
+        raise APIError("Gerät ist nicht registriert.", 403)
+    if assignment.user_id != auth["user_id"]:
+        raise APIError("Gerät gehört nicht zum angemeldeten Benutzer.", 403)
 
     description = "DARC e.V. OV L11 Getränke"
     metadata = {
@@ -91,6 +148,8 @@ def create_payment_intent():
         "item": str(item),
         "kassierer": str(kassierer),
         "device": str(device),
+        "user_id": str(assignment.user_id),
+        "role": str(assignment.role),
     }
 
     intent = stripe.PaymentIntent.create(

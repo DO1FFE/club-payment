@@ -45,6 +45,24 @@ python app.py
 
 Errors are returned as JSON with an `error` key and HTTP status code.
 
+## Geräte-Registrierung (Admin)
+
+Für den POS-Flow muss jedes Gerät serverseitig registriert sein. Die Authentifizierung erfolgt über Header:
+
+- `X-User-Id`: Benutzer-ID
+- `X-User-Role`: Rolle (z. B. `admin`, `kassierer`)
+
+Admin-Endpunkte:
+
+- `POST /admin/devices` → weist ein Gerät zu (`{ "device_id": "...", "user_id": "...", "role": "..." }`)
+- `GET /admin/devices` → listet alle Zuordnungen
+
+`POST /pos/create_intent` prüft zusätzlich:
+
+- Gerät ist registriert
+- Gerät gehört zum authentifizierten Benutzer
+- Metadata enthält `user_id` und `role` aus der Zuordnung
+
 ## Notes
 
 - This service purposely does not store payment data; all heavy lifting is done by Stripe.

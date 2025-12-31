@@ -1,7 +1,12 @@
 import importlib
+import sys
+from pathlib import Path
 
 import pytest
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+import device_registry
 
 @pytest.fixture()
 def app_module(monkeypatch):
@@ -9,9 +14,10 @@ def app_module(monkeypatch):
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost")
 
-    import backend.app as app
+    import app as app
 
     importlib.reload(app)
+    device_registry.reset_registry()
     return app
 
 
@@ -41,6 +47,7 @@ def test_connection_token_success(client, monkeypatch):
 
 def test_create_payment_intent_success(client, monkeypatch):
     test_client, app_module = client
+    device_registry.register_device(device_id="device1", user_id="user1", role="kassierer")
 
     class DummyIntent:
         def __init__(self):
@@ -52,6 +59,8 @@ def test_create_payment_intent_success(client, monkeypatch):
         assert kwargs["amount"] == 500
         assert kwargs["currency"] == "eur"
         assert kwargs["metadata"]["item"] == "Cola"
+        assert kwargs["metadata"]["user_id"] == "user1"
+        assert kwargs["metadata"]["role"] == "kassierer"
         return DummyIntent()
 
     monkeypatch.setattr(app_module.stripe.PaymentIntent, "create", staticmethod(fake_create))
@@ -59,6 +68,7 @@ def test_create_payment_intent_success(client, monkeypatch):
     response = test_client.post(
         "/pos/create_intent",
         json={"amount_cents": 500, "item": "Cola", "kassierer": "Erik", "device": "device1"},
+        headers={"X-User-Id": "user1", "X-User-Role": "kassierer"},
     )
 
     assert response.status_code == 200
@@ -70,9 +80,56 @@ def test_create_payment_intent_success(client, monkeypatch):
 
 def test_create_payment_intent_validation(client):
     test_client, _ = client
-    response = test_client.post("/pos/create_intent", json={"amount_cents": 0})
+    response = test_client.post(
+        "/pos/create_intent",
+        json={"amount_cents": 0, "device": "device1"},
+        headers={"X-User-Id": "user1", "X-User-Role": "kassierer"},
+    )
     assert response.status_code == 400
     assert "greater than zero" in response.get_json()["error"]
+
+
+def test_create_payment_intent_device_not_registered(client):
+    test_client, _ = client
+    response = test_client.post(
+        "/pos/create_intent",
+        json={"amount_cents": 500, "device": "device-x"},
+        headers={"X-User-Id": "user1", "X-User-Role": "kassierer"},
+    )
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "Gerät ist nicht registriert."
+
+
+def test_create_payment_intent_device_mismatch(client):
+    test_client, _ = client
+    device_registry.register_device(device_id="device1", user_id="user2", role="kassierer")
+    response = test_client.post(
+        "/pos/create_intent",
+        json={"amount_cents": 500, "device": "device1"},
+        headers={"X-User-Id": "user1", "X-User-Role": "kassierer"},
+    )
+    assert response.status_code == 403
+    assert response.get_json()["error"] == "Gerät gehört nicht zum angemeldeten Benutzer."
+
+
+def test_admin_device_endpoints(client):
+    test_client, _ = client
+    response = test_client.post(
+        "/admin/devices",
+        json={"device_id": "device1", "user_id": "user1", "role": "kassierer"},
+        headers={"X-User-Id": "admin1", "X-User-Role": "admin"},
+    )
+    assert response.status_code == 201
+    assert response.get_json() == {"device_id": "device1", "user_id": "user1", "role": "kassierer"}
+
+    response = test_client.get(
+        "/admin/devices",
+        headers={"X-User-Id": "admin1", "X-User-Role": "admin"},
+    )
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "devices": [{"device_id": "device1", "user_id": "user1", "role": "kassierer"}]
+    }
 
 
 def test_webhook_invalid_signature(client, monkeypatch):
