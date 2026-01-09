@@ -12,6 +12,8 @@ def app_module(monkeypatch):
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost")
     monkeypatch.setenv("ADMIN_API_TOKEN", "admin-token")
     monkeypatch.setenv("ADMIN_NAME", "Admin Nutzer")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin-passwort")
 
     backend_root = Path(__file__).resolve().parents[1]
     if str(backend_root) not in sys.path:
@@ -174,6 +176,30 @@ def test_admin_device_flow(client):
     assert list_response.status_code == 200
     devices = list_response.get_json()["devices"]
     assert any(device["device_id"] == "kasse-02" for device in devices)
+
+
+def test_login_success(client):
+    test_client, _ = client
+
+    response = test_client.post(
+        "/auth/login",
+        json={"username": "admin", "password": "admin-passwort"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"token": "admin-token", "display_name": "Admin Nutzer"}
+
+
+def test_login_invalid_password(client):
+    test_client, _ = client
+
+    response = test_client.post(
+        "/auth/login",
+        json={"username": "admin", "password": "falsch"},
+    )
+
+    assert response.status_code == 401
+    assert response.get_json()["error"] == "Benutzername oder Passwort ungültig"
 
 
 def test_webhook_invalid_signature(client, monkeypatch):

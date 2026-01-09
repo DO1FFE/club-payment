@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Iterable, Optional
 
+from werkzeug.security import check_password_hash, generate_password_hash
+
 
 class Role(str, Enum):
     ADMIN = "admin"
@@ -17,6 +19,8 @@ class User:
     role: Role
     active: bool
     api_token: str
+    username: Optional[str] = None
+    password_hash: Optional[str] = None
 
 
 class UserStore:
@@ -27,9 +31,25 @@ class UserStore:
     def list_users(self) -> Iterable[User]:
         return list(self._users.values())
 
-    def create_user(self, name: str, role: Role, active: bool, api_token: Optional[str] = None) -> User:
+    def create_user(
+        self,
+        name: str,
+        role: Role,
+        active: bool,
+        api_token: Optional[str] = None,
+        username: Optional[str] = None,
+        password_hash: Optional[str] = None,
+    ) -> User:
         token = api_token or secrets.token_urlsafe(32)
-        user = User(id=self._next_id, name=name, role=role, active=active, api_token=token)
+        user = User(
+            id=self._next_id,
+            name=name,
+            role=role,
+            active=active,
+            api_token=token,
+            username=username,
+            password_hash=password_hash,
+        )
         self._users[self._next_id] = user
         self._next_id += 1
         return user
@@ -42,6 +62,24 @@ class UserStore:
 
     def get_by_id(self, user_id: int) -> Optional[User]:
         return self._users.get(user_id)
+
+    def get_by_username(self, username: str) -> Optional[User]:
+        for user in self._users.values():
+            if user.username == username:
+                return user
+        return None
+
+    def authenticate(self, username: str, password: str) -> Optional[User]:
+        user = self.get_by_username(username)
+        if not user or not user.password_hash:
+            return None
+        if not check_password_hash(user.password_hash, password):
+            return None
+        return user
+
+    @staticmethod
+    def hash_password(password: str) -> str:
+        return generate_password_hash(password)
 
     def update_user(
         self,
@@ -72,5 +110,15 @@ def get_user_store() -> UserStore:
         admin_token = os.getenv("ADMIN_API_TOKEN")
         if admin_token:
             admin_name = os.getenv("ADMIN_NAME", "Admin")
-            _STORE.create_user(name=admin_name, role=Role.ADMIN, active=True, api_token=admin_token)
+            admin_username = os.getenv("ADMIN_USERNAME", admin_name)
+            admin_password = os.getenv("ADMIN_PASSWORD")
+            password_hash = _STORE.hash_password(admin_password) if admin_password else None
+            _STORE.create_user(
+                name=admin_name,
+                role=Role.ADMIN,
+                active=True,
+                api_token=admin_token,
+                username=admin_username,
+                password_hash=password_hash,
+            )
     return _STORE
