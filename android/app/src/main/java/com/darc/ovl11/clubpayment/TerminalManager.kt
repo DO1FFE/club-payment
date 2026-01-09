@@ -39,7 +39,13 @@ sealed class PaymentStatus {
     object CreatingIntent : PaymentStatus()
     object WaitingForTap : PaymentStatus()
     object Processing : PaymentStatus()
-    data class Success(val amountCents: Int, val intentId: String) : PaymentStatus()
+    object FetchingReceipt : PaymentStatus()
+    data class Success(
+        val amountCents: Int,
+        val intentId: String,
+        val receiptUrl: String?,
+        val receiptError: String? = null,
+    ) : PaymentStatus()
     data class Error(val message: String) : PaymentStatus()
 }
 

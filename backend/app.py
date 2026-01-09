@@ -92,6 +92,25 @@ def create_payment_intent():
     })
 
 
+@app.route("/pos/receipt/<string:payment_intent_id>", methods=["GET"])
+@handle_errors
+def get_receipt(payment_intent_id: str):
+    authenticate_request(request)
+    if not payment_intent_id.strip():
+        raise APIError("payment_intent_id ist erforderlich", 400)
+    intent = stripe.PaymentIntent.retrieve(
+        payment_intent_id,
+        expand=["latest_charge", "charges"],
+    )
+    charge = intent.latest_charge
+    if not charge and getattr(intent, "charges", None) and intent.charges.data:
+        charge = intent.charges.data[0]
+    receipt_url = getattr(charge, "receipt_url", None) if charge else None
+    if not receipt_url:
+        raise APIError("Beleg-URL nicht verfügbar", 404)
+    return jsonify({"receipt_url": receipt_url})
+
+
 @app.route("/admin/devices", methods=["POST"])
 @handle_errors
 def assign_device():

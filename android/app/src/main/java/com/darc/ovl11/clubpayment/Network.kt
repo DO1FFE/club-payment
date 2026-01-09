@@ -10,7 +10,9 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.Path
 import kotlinx.coroutines.runBlocking
 
 @Serializable
@@ -45,6 +47,11 @@ data class PaymentIntentResponse(
     val amount_cents: Int,
 )
 
+@Serializable
+data class ReceiptResponse(
+    val receipt_url: String,
+)
+
 interface BackendService {
     @POST("/terminal/connection_token")
     suspend fun createConnectionToken(): ConnectionTokenResponse
@@ -54,6 +61,9 @@ interface BackendService {
 
     @POST("/pos/create_intent")
     suspend fun createPaymentIntent(@Body request: PaymentIntentRequest): PaymentIntentResponse
+
+    @GET("/pos/receipt/{payment_intent_id}")
+    suspend fun getReceipt(@Path("payment_intent_id") paymentIntentId: String): ReceiptResponse
 }
 
 class AuthInterceptor(private val authStore: AuthStore) : okhttp3.Interceptor {
