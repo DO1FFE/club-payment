@@ -78,4 +78,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     implementation("com.stripe:stripeterminal:3.10.1")
+    implementation("com.google.zxing:core:3.5.3")
 }

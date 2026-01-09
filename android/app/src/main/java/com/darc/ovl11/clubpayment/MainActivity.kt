@@ -1,9 +1,11 @@
 package com.darc.ovl11.clubpayment
 
+import android.graphics.Bitmap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,12 +28,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -47,7 +52,7 @@ class MainActivity : ComponentActivity() {
         object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return PaymentViewModel(terminalManager, authStore) as T
+                return PaymentViewModel(terminalManager, authStore, backendService) as T
             }
         }
     }
@@ -74,6 +79,7 @@ class MainActivity : ComponentActivity() {
 class PaymentViewModel(
     private val terminalManager: TerminalManager,
     private val authStore: AuthStore,
+    private val backendService: BackendService,
 ) : ViewModel() {
     private val _status = MutableStateFlow<PaymentStatus>(PaymentStatus.Idle)
     val status: StateFlow<PaymentStatus> = _status
@@ -94,10 +100,27 @@ class PaymentViewModel(
                 val collected = terminalManager.collectPayment(intent)
                 _status.value = PaymentStatus.Processing
                 val processed = terminalManager.processPayment(collected)
-                _status.value = PaymentStatus.Success(processed.amount ?: intent.amount!!, processed.id)
+                _status.value = PaymentStatus.FetchingReceipt
+                val amountCents = processed.amount ?: intent.amount!!
+                val receiptResult = fetchReceiptUrl(processed.id)
+                _status.value = PaymentStatus.Success(
+                    amountCents = amountCents,
+                    intentId = processed.id,
+                    receiptUrl = receiptResult.first,
+                    receiptError = receiptResult.second
+                )
             } catch (e: Exception) {
                 _status.value = PaymentStatus.Error(e.message ?: "Unbekannter Fehler")
             }
+        }
+    }
+
+    private suspend fun fetchReceiptUrl(paymentIntentId: String): Pair<String?, String?> {
+        return try {
+            val response = backendService.getReceipt(paymentIntentId)
+            Pair(response.receipt_url, null)
+        } catch (e: Exception) {
+            Pair(null, e.message ?: "Beleg konnte nicht geladen werden")
         }
     }
 }
@@ -242,11 +265,68 @@ fun StatusCard(status: PaymentStatus) {
         PaymentStatus.CreatingIntent -> "Intent wird erstellt..."
         PaymentStatus.WaitingForTap -> "Bitte Karte/Handy an das Gerät halten"
         PaymentStatus.Processing -> "Zahlung wird verarbeitet"
+        PaymentStatus.FetchingReceipt -> "Beleg wird abgerufen..."
         is PaymentStatus.Success -> "Erfolg: ${(status.amountCents / 100.0)} € – ${status.intentId}"
         is PaymentStatus.Error -> "Fehler: ${status.message}"
     }
     Card(modifier = Modifier.fillMaxWidth()) {
-        Text(text = message, modifier = Modifier.padding(16.dp))
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = message)
+            if (status is PaymentStatus.Success) {
+                status.receiptError?.let { errorText ->
+                    Text(text = "Beleg konnte nicht geladen werden: $errorText", color = MaterialTheme.colorScheme.error)
+                }
+                status.receiptUrl?.let { receiptUrl ->
+                    ReceiptQrCard(receiptUrl)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ReceiptQrCard(receiptUrl: String) {
+    val qrBitmap = remember(receiptUrl) { generateQrCodeBitmap(receiptUrl) }
+    if (qrBitmap == null) {
+        Text(text = "QR-Code konnte nicht erstellt werden", color = MaterialTheme.colorScheme.error)
+        return
+    }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(text = "Beleg als QR-Code", style = MaterialTheme.typography.titleMedium)
+            Image(
+                bitmap = qrBitmap.asImageBitmap(),
+                contentDescription = "QR-Code für den Beleg",
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+fun generateQrCodeBitmap(content: String, size: Int = 512): Bitmap? {
+    return try {
+        val writer = QRCodeWriter()
+        val matrix = writer.encode(content, BarcodeFormat.QR_CODE, size, size)
+        val pixels = IntArray(size * size)
+        for (y in 0 until size) {
+            val offset = y * size
+            for (x in 0 until size) {
+                pixels[offset + x] = if (matrix.get(x, y)) {
+                    0xFF000000.toInt()
+                } else {
+                    0xFFFFFFFF.toInt()
+                }
+            }
+        }
+        Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+    } catch (e: Exception) {
+        null
     }
 }
 
