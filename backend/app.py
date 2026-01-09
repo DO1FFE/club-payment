@@ -150,6 +150,8 @@ def create_user():
     role_value = payload.get("role")
     active = payload.get("active", True)
     api_token = payload.get("api_token")
+    username = payload.get("username")
+    password = payload.get("password")
 
     if not isinstance(name, str) or not name.strip():
         raise APIError("name ist erforderlich", 400)
@@ -157,9 +159,26 @@ def create_user():
         raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
     if not isinstance(active, bool):
         raise APIError("active muss ein boolescher Wert sein", 400)
+    if username is not None and (not isinstance(username, str) or not username.strip()):
+        raise APIError("username darf nicht leer sein", 400)
+    if password is not None and (not isinstance(password, str) or not password.strip()):
+        raise APIError("password darf nicht leer sein", 400)
+    if (username is None) != (password is None):
+        raise APIError("username und password müssen gemeinsam gesetzt werden", 400)
 
     store = get_user_store()
-    user = store.create_user(name=name.strip(), role=Role(role_value), active=active, api_token=api_token)
+    if isinstance(username, str) and store.get_by_username(username):
+        raise APIError("username ist bereits vergeben", 400)
+
+    password_hash = store.hash_password(password) if isinstance(password, str) else None
+    user = store.create_user(
+        name=name.strip(),
+        role=Role(role_value),
+        active=active,
+        api_token=api_token,
+        username=username.strip() if isinstance(username, str) else None,
+        password_hash=password_hash,
+    )
     return jsonify({
         "id": user.id,
         "name": user.name,
@@ -167,6 +186,31 @@ def create_user():
         "active": user.active,
         "api_token": user.api_token,
     }), 201
+
+
+@app.route("/auth/login", methods=["POST"])
+@handle_errors
+def login():
+    payload = request.get_json(force=True, silent=True) or {}
+    username = payload.get("username")
+    password = payload.get("password")
+
+    if not isinstance(username, str) or not username.strip():
+        raise APIError("username ist erforderlich", 400)
+    if not isinstance(password, str) or not password.strip():
+        raise APIError("password ist erforderlich", 400)
+
+    store = get_user_store()
+    user = store.authenticate(username.strip(), password)
+    if not user:
+        raise APIError("Benutzername oder Passwort ungültig", 401)
+    if not user.active:
+        raise APIError("Benutzer ist deaktiviert", 403)
+
+    return jsonify({
+        "token": user.api_token,
+        "display_name": user.name,
+    })
 
 
 @app.route("/admin/users", methods=["GET"])
