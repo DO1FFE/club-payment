@@ -47,6 +47,7 @@ gradle wrapper --gradle-version 8.7
 ./gradlew :app:assembleDebug      # Debug APK
 ./gradlew :app:assembleRelease    # Release (unsigned, falls keine Signatur konfiguriert)
 ```
+Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine Debug-APK als Artefakt.
 
 ### Release signieren
 1. Keystore erstellen (einmalig):
