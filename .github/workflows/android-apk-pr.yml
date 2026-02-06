@@ -45,7 +45,12 @@ jobs:
 
       - name: Android local.properties schreiben
         run: |
-          echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > android/local.properties
+          SDK_DIR="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ -z "$SDK_DIR" ]; then
+            echo "ANDROID_SDK_ROOT oder ANDROID_HOME ist nicht gesetzt." >&2
+            exit 1
+          fi
+          echo "sdk.dir=${SDK_DIR}" > android/local.properties
           echo "BACKEND_BASE_URL=${BACKEND_BASE_URL}" >> android/local.properties
         env:
           BACKEND_BASE_URL: https://example.com
@@ -57,7 +62,10 @@ jobs:
           unzip -q /tmp/gradle-8.7-bin.zip -d /tmp
 
       - name: Debug-APK bauen
-        run: /tmp/gradle-8.7/bin/gradle -p android :app:assembleDebug --stacktrace --info --no-daemon
+        run: |
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          /tmp/gradle-8.7/bin/gradle -p android :app:assembleDebug --stacktrace --info --no-daemon
 
       - name: Debug-APK hochladen
         uses: actions/upload-artifact@v4
