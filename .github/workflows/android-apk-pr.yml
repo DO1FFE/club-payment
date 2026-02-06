@@ -50,7 +50,7 @@ jobs:
 
       - name: Debug-APK bauen
         working-directory: android
-        run: ./gradlew :app:assembleDebug
+        run: ./gradlew :app:assembleDebug --stacktrace --info --no-daemon
 
       - name: Debug-APK hochladen
         uses: actions/upload-artifact@v4
