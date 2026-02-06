@@ -48,7 +48,26 @@ case "`uname`" in
   NONSTOP* ) nonstop=true ;;
 esac
 
-CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+WRAPPER_JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+if [ ! -f "$WRAPPER_JAR" ]; then
+    warn "Gradle-Wrapper-JAR fehlt. Ich versuche, sie mit lokalem Gradle zu erzeugen."
+    if command -v gradle >/dev/null 2>&1; then
+        WRAPPER_VERSION=`sed -n 's/.*gradle-\([0-9.]*\)-bin.*/\1/p' "$APP_HOME/gradle/wrapper/gradle-wrapper.properties"`
+        if [ -z "$WRAPPER_VERSION" ]; then
+            warn "Konnte die Gradle-Version nicht aus gradle-wrapper.properties lesen."
+            exit 1
+        fi
+        (cd "$APP_HOME" && gradle wrapper --gradle-version "$WRAPPER_VERSION") || {
+            warn "Gradle-Wrapper-JAR konnte nicht erzeugt werden."
+            exit 1
+        }
+    else
+        warn "Gradle ist nicht installiert. Bitte im android/-Verzeichnis 'gradle wrapper --gradle-version 8.7' ausführen."
+        exit 1
+    fi
+fi
+
+CLASSPATH=$WRAPPER_JAR
 
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
