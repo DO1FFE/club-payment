@@ -31,6 +31,12 @@ jobs:
       - name: Android-SDK einrichten
         uses: android-actions/setup-android@v3
 
+      - name: Android-SDK Pakete installieren
+        run: |
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
       - name: Android local.properties schreiben
         run: |
           echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > android/local.properties
