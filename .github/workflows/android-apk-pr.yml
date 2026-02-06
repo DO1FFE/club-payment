@@ -40,6 +40,9 @@ jobs:
       - name: Android local.properties schreiben
         run: |
           echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > android/local.properties
+          echo "BACKEND_BASE_URL=${BACKEND_BASE_URL}" >> android/local.properties
+        env:
+          BACKEND_BASE_URL: https://example.com
 
       - name: Gradle-Wrapper-JAR lokal bereitstellen
         if: ${{ hashFiles('android/gradle/wrapper/gradle-wrapper.jar') == '' }}
