@@ -48,8 +48,16 @@ jobs:
         if: ${{ hashFiles('android/gradle/wrapper/gradle-wrapper.jar') == '' }}
         run: |
           curl -sSL -o /tmp/gradle-8.7-bin.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          unzip -p /tmp/gradle-8.7-bin.zip gradle-8.7/lib/plugins/gradle-wrapper-8.7.jar > /tmp/gradle-wrapper-plugin.jar
-          unzip -p /tmp/gradle-wrapper-plugin.jar gradle-wrapper.jar > android/gradle/wrapper/gradle-wrapper.jar
+          rm -rf /tmp/gradle-8.7
+          unzip -q /tmp/gradle-8.7-bin.zip -d /tmp
+          /tmp/gradle-8.7/bin/gradle -p android wrapper --gradle-version 8.7
+
+      - name: Gradle-Wrapper-JAR prüfen
+        run: |
+          if [ ! -f android/gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "Fehler: android/gradle/wrapper/gradle-wrapper.jar fehlt. Gradle-Wrapper-Erzeugung prüfen." >&2
+            exit 1
+          fi
 
       - name: Debug-APK bauen
         working-directory: android
