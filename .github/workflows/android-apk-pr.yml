@@ -28,6 +28,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
+      - name: Android-SDK einrichten
+        uses: android-actions/setup-android@v3
+
+      - name: Android local.properties schreiben
+        run: |
+          echo "sdk.dir=${ANDROID_SDK_ROOT:-$ANDROID_HOME}" > android/local.properties
+
       - name: Gradle-Wrapper-JAR lokal bereitstellen
         if: ${{ hashFiles('android/gradle/wrapper/gradle-wrapper.jar') == '' }}
         run: |
