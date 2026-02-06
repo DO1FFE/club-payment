@@ -17,7 +17,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        val props = gradleLocalProperties(rootDir)
+        val props = gradleLocalProperties(rootDir, providers)
         val backendUrl = props.getProperty("BACKEND_BASE_URL") ?: project.findProperty("BACKEND_BASE_URL")?.toString()
         val locationId = props.getProperty("LOCATION_ID") ?: project.findProperty("LOCATION_ID")?.toString()
         if (backendUrl.isNullOrBlank()) {
@@ -49,6 +49,7 @@ android {
         jvmTarget = "17"
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
     composeOptions {
