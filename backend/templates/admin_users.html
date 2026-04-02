@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <title>Admin Nutzerverwaltung</title>
+  </head>
+  <body>
+    <h1>Nutzerverwaltung</h1>
+    <p>Angemeldet als: {{ admin_name }}</p>
+    <form method="post" action="{{ url_for('admin_web_logout') }}">
+      <button type="submit">Abmelden</button>
+    </form>
+
+    {% if error_message %}
+    <p style="color: #b00020;">{{ error_message }}</p>
+    {% endif %}
+
+    <h2>Vorhandene Nutzer</h2>
+    <table border="1" cellpadding="4">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Rolle</th>
+          <th>Aktiv</th>
+          <th>Username</th>
+          <th>Gerät</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+        <tr>
+          <td>{{ user.id }}</td>
+          <td>{{ user.name }}</td>
+          <td>{{ user.role.value }}</td>
+          <td>{{ 'ja' if user.active else 'nein' }}</td>
+          <td>{{ user.username or '-' }}</td>
+          <td>{{ assignments.get(user.id, '-') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Neuen Nutzer anlegen</h2>
+    <form method="post" action="{{ url_for('admin_web_users') }}">
+      <label for="name">Name</label>
+      <input id="name" name="name" type="text" required>
+      <br>
+      <label for="role">Rolle</label>
+      <select id="role" name="role" required>
+        <option value="kassierer">kassierer</option>
+        <option value="admin">admin</option>
+      </select>
+      <br>
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" required>
+      <br>
+      <label for="password">Passwort</label>
+      <input id="password" name="password" type="password" required>
+      <br>
+      <label for="active">Aktiv</label>
+      <input id="active" name="active" type="checkbox" checked>
+      <br>
+      <label for="device_id">Gerätezuweisung (optional)</label>
+      <input id="device_id" name="device_id" type="text">
+      <br>
+      <button type="submit">Nutzer erstellen</button>
+    </form>
+  </body>
+</html>

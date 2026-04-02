@@ -390,3 +390,79 @@ def test_no_interactive_bootstrap_when_admin_exists(monkeypatch, tmp_path):
     assert admin is not None
     assert admin.role == users.Role.ADMIN
     assert called["interactive"] is False
+
+
+def test_admin_web_login_and_users_page(client):
+    test_client, _ = client
+
+    response = test_client.get("/admin/web/users")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin/web/login")
+
+    login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+        follow_redirects=True,
+    )
+    assert login_response.status_code == 200
+    assert "Nutzerverwaltung" in login_response.get_data(as_text=True)
+    assert "Admin Nutzer" in login_response.get_data(as_text=True)
+
+
+def test_admin_web_user_validation(client):
+    test_client, _ = client
+    login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+    assert login_response.status_code == 302
+
+    response = test_client.post(
+        "/admin/web/users",
+        data={
+            "name": "Test Nutzer",
+            "role": "kassierer",
+            "username": "web-user-1",
+            "password": "",
+            "active": "on",
+        },
+    )
+    assert response.status_code == 200
+    assert "password ist erforderlich" in response.get_data(as_text=True)
+
+
+def test_admin_web_create_user_success_with_device(client):
+    test_client, app_module = client
+    login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+    assert login_response.status_code == 302
+
+    create_response = test_client.post(
+        "/admin/web/users",
+        data={
+            "name": "Web Kassierer",
+            "role": "kassierer",
+            "username": "web-kassierer",
+            "password": "web-passwort",
+            "active": "on",
+            "device_id": "web-kasse-1",
+        },
+    )
+    assert create_response.status_code == 302
+    assert create_response.headers["Location"].endswith("/admin/web/users")
+
+    store = app_module.get_user_store()
+    user = store.get_by_username("web-kassierer")
+    assert user is not None
+    assert user.name == "Web Kassierer"
+    assert user.role == app_module.Role.KASSIERER
+    assert user.active is True
+    assert user.password_hash
+    assert "web-passwort" not in user.password_hash
+
+    registry = app_module.get_device_registry()
+    assignment = registry.get_device("web-kasse-1")
+    assert assignment is not None
+    assert assignment.user_id == user.id
