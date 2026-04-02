@@ -22,15 +22,23 @@ class AuthViewModel(
     val authState: StateFlow<AuthData?> = authStore.authData
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val rememberedUserName: StateFlow<String?> = authStore.rememberedUserName
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     private val _loginStatus = MutableStateFlow<LoginStatus>(LoginStatus.Idle)
     val loginStatus: StateFlow<LoginStatus> = _loginStatus.asStateFlow()
 
-    fun login(userName: String, password: String) {
+    fun login(userName: String, password: String, rememberCredentials: Boolean) {
         viewModelScope.launch {
             _loginStatus.value = LoginStatus.Loading
             try {
                 val response = backendService.login(LoginRequest(username = userName, password = password))
                 authStore.saveAuth(response.token, response.displayName)
+                if (rememberCredentials) {
+                    authStore.saveRememberedUserName(userName)
+                } else {
+                    authStore.clearRememberedCredentials()
+                }
                 _loginStatus.value = LoginStatus.Idle
             } catch (e: Exception) {
                 _loginStatus.value = LoginStatus.Error(e.message ?: "Login fehlgeschlagen")

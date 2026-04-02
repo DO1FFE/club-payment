@@ -16,12 +16,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -210,7 +212,16 @@ fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
 fun LoginScreen(authViewModel: AuthViewModel) {
     var userName by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var rememberCredentials by remember { mutableStateOf(false) }
+    val rememberedUserName by authViewModel.rememberedUserName.collectAsState()
     val loginStatus by authViewModel.loginStatus.collectAsState()
+
+    LaunchedEffect(rememberedUserName) {
+        if (userName.isBlank() && !rememberedUserName.isNullOrBlank()) {
+            userName = rememberedUserName.orEmpty()
+            rememberCredentials = true
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -234,8 +245,22 @@ fun LoginScreen(authViewModel: AuthViewModel) {
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth()
         )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = rememberCredentials,
+                onCheckedChange = { rememberCredentials = it }
+            )
+            Text("Anmeldedaten merken (nur Benutzername)")
+        }
+        Text(
+            text = "Angemeldet bleiben nutzt ausschließlich Token-Speicherung.",
+            style = MaterialTheme.typography.bodySmall
+        )
         Button(
-            onClick = { authViewModel.login(userName.trim(), password) },
+            onClick = { authViewModel.login(userName.trim(), password, rememberCredentials) },
             enabled = userName.isNotBlank() && password.isNotBlank() && loginStatus !is LoginStatus.Loading,
             modifier = Modifier.fillMaxWidth()
         ) {

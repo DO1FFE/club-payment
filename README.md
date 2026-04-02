@@ -66,6 +66,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 - Network Security Config erlaubt Klartext nur für `10.0.2.2/localhost` (Emulator); produktiv HTTPS nutzen.
 - R8/ProGuard ist für Release aktiviert; Stripe Terminal-Klassen werden per Rule erhalten.
 - Tap to Pay Flow ist nativ über das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present).
+- Auth-Persistenz-Entscheidung (Android): **Token-only für „Angemeldet bleiben“**. Es werden keine Passwörter gespeichert. Optional kann nur der Benutzername für die Login-Vorbelegung gespeichert werden.
 
 ## Backend-API aus der App
 - `POST /terminal/connection_token` → holt Connection Token für das Terminal SDK
