@@ -6,7 +6,7 @@ import pytest
 
 
 @pytest.fixture()
-def app_module(monkeypatch):
+def app_module(monkeypatch, tmp_path):
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummy")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost")
@@ -14,20 +14,23 @@ def app_module(monkeypatch):
     monkeypatch.setenv("ADMIN_NAME", "Admin Nutzer")
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "admin-passwort")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.sqlite3'}")
 
     backend_root = Path(__file__).resolve().parents[1]
     if str(backend_root) not in sys.path:
         sys.path.insert(0, str(backend_root))
 
     import app as app
+    import database as database
     import device_registry as device_registry
     import products as products
     import users as users
 
-    importlib.reload(app)
+    importlib.reload(database)
+    importlib.reload(users)
     importlib.reload(device_registry)
     importlib.reload(products)
-    importlib.reload(users)
+    importlib.reload(app)
     return app
 
 
