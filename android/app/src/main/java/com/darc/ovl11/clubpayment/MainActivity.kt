@@ -15,11 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -84,7 +84,32 @@ class PaymentViewModel(
     private val _status = MutableStateFlow<PaymentStatus>(PaymentStatus.Idle)
     val status: StateFlow<PaymentStatus> = _status
 
+    private val _products = MutableStateFlow<List<ProductDto>>(emptyList())
+    val products: StateFlow<List<ProductDto>> = _products
+
+    private val _productsLoading = MutableStateFlow(false)
+    val productsLoading: StateFlow<Boolean> = _productsLoading
+
+    private val _productsError = MutableStateFlow<String?>(null)
+    val productsError: StateFlow<String?> = _productsError
+
     val deviceName: String = terminalManager.readableDeviceName()
+
+    fun loadProducts() {
+        viewModelScope.launch {
+            _productsLoading.value = true
+            _productsError.value = null
+            try {
+                val response = backendService.listProducts()
+                _products.value = response.products.filter { it.active }
+            } catch (e: Exception) {
+                _products.value = emptyList()
+                _productsError.value = e.message ?: "Produkte konnten nicht geladen werden"
+            } finally {
+                _productsLoading.value = false
+            }
+        }
+    }
 
     fun startPayment(amountCents: Int, itemLabel: String) {
         viewModelScope.launch {
@@ -133,6 +158,9 @@ fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
     if (authState == null) {
         LoginScreen(authViewModel)
     } else {
+        androidx.compose.runtime.LaunchedEffect(authState?.token) {
+            viewModel.loadProducts()
+        }
         PaymentScreen(
             viewModel = viewModel,
             userName = authState?.userName.orEmpty(),
@@ -188,9 +216,10 @@ fun LoginScreen(authViewModel: AuthViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PaymentScreen(viewModel: PaymentViewModel, userName: String, onLogout: () -> Unit) {
-    var freeAmountText by remember { mutableStateOf("") }
-
     val status by viewModel.status.collectAsState()
+    val products by viewModel.products.collectAsState()
+    val productsLoading by viewModel.productsLoading.collectAsState()
+    val productsError by viewModel.productsError.collectAsState()
 
     Column(
         modifier = Modifier
@@ -212,35 +241,37 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, onLogout: () ->
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            PriceButton("Cola/Bier", 150) { viewModel.startPayment(150, "Cola/Bier") }
-            PriceButton("Wasser", 50) { viewModel.startPayment(50, "Wasser") }
+        if (productsLoading) {
+            CircularProgressIndicator()
         }
 
-        OutlinedTextField(
-            value = freeAmountText,
-            onValueChange = { freeAmountText = it },
-            label = { Text("Freier Betrag (€)") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = TextFieldDefaults.outlinedTextFieldColors()
-        )
+        productsError?.let { errorText ->
+            Text(
+                text = "Produkte konnten nicht geladen werden: $errorText",
+                color = MaterialTheme.colorScheme.error
+            )
+        }
 
-        Button(
-            onClick = {
-                parseAmountToCents(freeAmountText)?.let { cents ->
-                    viewModel.startPayment(cents, "Freier Betrag")
+        products.chunked(2).forEach { rowProducts ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                rowProducts.forEach { product ->
+                    PriceButton(product.name, product.price_cents) {
+                        viewModel.startPayment(product.price_cents, product.name)
+                    }
                 }
-            },
-            enabled = parseAmountToCents(freeAmountText) != null,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Zahlung starten")
+                if (rowProducts.size == 1) {
+                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.weight(1f))
+                }
+            }
         }
+
+        Text(
+            text = "Freier Betrag ist deaktiviert. Es sind nur feste Produktpreise erlaubt.",
+            style = MaterialTheme.typography.bodySmall
+        )
 
         StatusCard(status)
     }
@@ -328,12 +359,4 @@ fun generateQrCodeBitmap(content: String, size: Int = 512): Bitmap? {
     } catch (e: Exception) {
         null
     }
-}
-
-fun parseAmountToCents(input: String): Int? {
-    if (input.isBlank()) return null
-    val normalized = input.replace(",", ".")
-    val value = normalized.toDoubleOrNull() ?: return null
-    if (value < 0.1 || value > 99.99) return null
-    return (value * 100).toInt()
 }
