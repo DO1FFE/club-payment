@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -38,7 +39,10 @@ import androidx.lifecycle.viewModelScope
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
@@ -87,6 +91,17 @@ class PaymentViewModel(
     private val _products = MutableStateFlow<List<ProductDto>>(emptyList())
     val products: StateFlow<List<ProductDto>> = _products
 
+    private val _selectedItems = MutableStateFlow<Map<Int, Int>>(emptyMap())
+    val selectedItems: StateFlow<Map<Int, Int>> = _selectedItems
+
+    val totalAmountCents: StateFlow<Int> = combine(_products, _selectedItems) { products, selectedItems ->
+        calculateTotalAmountCents(products, selectedItems)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    val itemLabel: StateFlow<String> = combine(_products, _selectedItems) { products, selectedItems ->
+        createItemLabel(products, selectedItems)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
     private val _productsLoading = MutableStateFlow(false)
     val productsLoading: StateFlow<Boolean> = _productsLoading
 
@@ -109,6 +124,27 @@ class PaymentViewModel(
                 _productsLoading.value = false
             }
         }
+    }
+
+    fun addProduct(product: ProductDto) {
+        _selectedItems.value = _selectedItems.value.toMutableMap().apply {
+            val quantity = getOrDefault(product.id, 0) + 1
+            this[product.id] = quantity
+        }
+    }
+
+    fun removeProduct(product: ProductDto) {
+        _selectedItems.value = _selectedItems.value.toMutableMap().apply {
+            val oldQuantity = getOrDefault(product.id, 0)
+            when {
+                oldQuantity <= 1 -> remove(product.id)
+                oldQuantity > 1 -> this[product.id] = oldQuantity - 1
+            }
+        }
+    }
+
+    fun clearCart() {
+        _selectedItems.value = emptyMap()
     }
 
     fun startPayment(amountCents: Int, itemLabel: String) {
@@ -134,6 +170,7 @@ class PaymentViewModel(
                     receiptUrl = receiptResult.first,
                     receiptError = receiptResult.second
                 )
+                clearCart()
             } catch (e: Exception) {
                 _status.value = PaymentStatus.Error(e.message ?: "Unbekannter Fehler")
             }
@@ -220,6 +257,9 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, onLogout: () ->
     val products by viewModel.products.collectAsState()
     val productsLoading by viewModel.productsLoading.collectAsState()
     val productsError by viewModel.productsError.collectAsState()
+    val selectedItems by viewModel.selectedItems.collectAsState()
+    val totalAmountCents by viewModel.totalAmountCents.collectAsState()
+    val itemLabel by viewModel.itemLabel.collectAsState()
 
     Column(
         modifier = Modifier
@@ -259,21 +299,77 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, onLogout: () ->
             ) {
                 rowProducts.forEach { product ->
                     PriceButton(product.name, product.price_cents) {
-                        viewModel.startPayment(product.price_cents, product.name)
+                        viewModel.addProduct(product)
                     }
                 }
                 if (rowProducts.size == 1) {
-                    androidx.compose.foundation.layout.Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }
 
-        Text(
-            text = "Freier Betrag ist deaktiviert. Es sind nur feste Produktpreise erlaubt.",
-            style = MaterialTheme.typography.bodySmall
+        CartCard(
+            products = products,
+            selectedItems = selectedItems,
+            totalAmountCents = totalAmountCents,
+            onAddProduct = { viewModel.addProduct(it) },
+            onRemoveProduct = { viewModel.removeProduct(it) },
+            onClearCart = { viewModel.clearCart() }
         )
 
+        Button(
+            onClick = { viewModel.startPayment(totalAmountCents, itemLabel) },
+            enabled = isPayButtonEnabled(totalAmountCents, status),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Bezahlen")
+        }
+
         StatusCard(status)
+    }
+}
+
+@Composable
+fun CartCard(
+    products: List<ProductDto>,
+    selectedItems: Map<Int, Int>,
+    totalAmountCents: Int,
+    onAddProduct: (ProductDto) -> Unit,
+    onRemoveProduct: (ProductDto) -> Unit,
+    onClearCart: () -> Unit,
+) {
+    val formatter = NumberFormat.getCurrencyInstance(Locale.GERMANY)
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(text = "Warenkorb", style = MaterialTheme.typography.titleMedium)
+            if (selectedItems.isEmpty()) {
+                Text(text = "Noch keine Produkte ausgewählt.")
+            } else {
+                products
+                    .filter { selectedItems.containsKey(it.id) }
+                    .forEach { product ->
+                        val quantity = selectedItems[product.id] ?: 0
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(text = "${product.name} × $quantity")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { onRemoveProduct(product) }) { Text("−") }
+                                Button(onClick = { onAddProduct(product) }) { Text("+") }
+                            }
+                        }
+                    }
+                Button(onClick = onClearCart, modifier = Modifier.fillMaxWidth()) {
+                    Text("Warenkorb leeren")
+                }
+            }
+            Text(
+                text = "Gesamt: ${formatter.format(totalAmountCents / 100.0)}",
+                style = MaterialTheme.typography.titleMedium
+            )
+        }
     }
 }
 
@@ -359,4 +455,31 @@ fun generateQrCodeBitmap(content: String, size: Int = 512): Bitmap? {
     } catch (e: Exception) {
         null
     }
+}
+
+fun calculateTotalAmountCents(products: List<ProductDto>, selectedItems: Map<Int, Int>): Int {
+    val priceById = products.associateBy({ it.id }, { it.price_cents })
+    return selectedItems.entries.sumOf { (id, quantity) ->
+        val price = priceById[id] ?: 0
+        price * quantity
+    }
+}
+
+fun createItemLabel(products: List<ProductDto>, selectedItems: Map<Int, Int>): String {
+    val productById = products.associateBy { it.id }
+    return selectedItems.entries
+        .sortedBy { entry -> productById[entry.key]?.name ?: "" }
+        .mapNotNull { (id, quantity) ->
+            val product = productById[id] ?: return@mapNotNull null
+            "$quantity× ${product.name}"
+        }
+        .joinToString(", ")
+}
+
+fun isPayButtonEnabled(totalAmountCents: Int, status: PaymentStatus): Boolean {
+    val paymentInProgress = status is PaymentStatus.CreatingIntent ||
+        status is PaymentStatus.WaitingForTap ||
+        status is PaymentStatus.Processing ||
+        status is PaymentStatus.FetchingReceipt
+    return totalAmountCents > 0 && !paymentInProgress
 }
