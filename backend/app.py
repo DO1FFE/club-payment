@@ -9,6 +9,7 @@ import stripe
 from auth import authenticate_request
 from device_registry import get_device_registry
 from errors import APIError, handle_errors, validate_amount_cents
+from products import get_product_store
 from users import Role, get_user_store
 
 load_dotenv()
@@ -277,6 +278,105 @@ def update_user(user_id: int):
         "name": user.name,
         "role": user.role.value,
         "active": user.active,
+    })
+
+
+@app.route("/admin/products", methods=["POST"])
+@handle_errors
+def create_product():
+    authenticate_request(request, require_admin=True)
+    payload = request.get_json(force=True, silent=True) or {}
+    name = payload.get("name")
+    price_cents = payload.get("price_cents")
+    active = payload.get("active", True)
+
+    if not isinstance(name, str) or not name.strip():
+        raise APIError("name ist erforderlich", 400)
+    if not isinstance(active, bool):
+        raise APIError("active muss ein boolescher Wert sein", 400)
+
+    store = get_product_store()
+    product = store.create_product(
+        name=name.strip(),
+        price_cents=validate_amount_cents(price_cents),
+        active=active,
+    )
+    return jsonify({
+        "id": product.id,
+        "name": product.name,
+        "price_cents": product.price_cents,
+        "active": product.active,
+    }), 201
+
+
+@app.route("/admin/products", methods=["GET"])
+@handle_errors
+def list_products():
+    authenticate_request(request, require_admin=True)
+    store = get_product_store()
+    products = [
+        {
+            "id": product.id,
+            "name": product.name,
+            "price_cents": product.price_cents,
+            "active": product.active,
+        }
+        for product in store.list_products()
+    ]
+    return jsonify({"products": products})
+
+
+@app.route("/products", methods=["GET"])
+@handle_errors
+def list_active_products():
+    authenticate_request(request)
+    store = get_product_store()
+    products = [
+        {
+            "id": product.id,
+            "name": product.name,
+            "price_cents": product.price_cents,
+            "active": product.active,
+        }
+        for product in store.list_products()
+        if product.active
+    ]
+    return jsonify({"products": products})
+
+
+@app.route("/admin/products/<int:product_id>", methods=["PATCH"])
+@handle_errors
+def update_product(product_id: int):
+    authenticate_request(request, require_admin=True)
+    payload = request.get_json(force=True, silent=True) or {}
+    name = payload.get("name")
+    price_cents = payload.get("price_cents")
+    active = payload.get("active")
+
+    if name is not None and (not isinstance(name, str) or not name.strip()):
+        raise APIError("name darf nicht leer sein", 400)
+    validated_price_cents = None
+    if price_cents is not None:
+        validated_price_cents = validate_amount_cents(price_cents)
+    if active is not None and not isinstance(active, bool):
+        raise APIError("active muss ein boolescher Wert sein", 400)
+    if name is None and price_cents is None and active is None:
+        raise APIError("Mindestens ein Feld zum Aktualisieren ist erforderlich", 400)
+
+    store = get_product_store()
+    product = store.update_product(
+        product_id=product_id,
+        name=name.strip() if isinstance(name, str) else None,
+        price_cents=validated_price_cents,
+        active=active,
+    )
+    if not product:
+        raise APIError("Produkt nicht gefunden", 404)
+    return jsonify({
+        "id": product.id,
+        "name": product.name,
+        "price_cents": product.price_cents,
+        "active": product.active,
     })
 
 

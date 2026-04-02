@@ -11,6 +11,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
 import kotlinx.coroutines.runBlocking
@@ -52,6 +53,33 @@ data class ReceiptResponse(
     val receipt_url: String,
 )
 
+@Serializable
+data class ProductDto(
+    val id: Int,
+    val name: String,
+    val price_cents: Int,
+    val active: Boolean,
+)
+
+@Serializable
+data class ProductListResponse(
+    val products: List<ProductDto>,
+)
+
+@Serializable
+data class CreateProductRequest(
+    val name: String,
+    val price_cents: Int,
+    val active: Boolean = true,
+)
+
+@Serializable
+data class UpdateProductRequest(
+    val name: String? = null,
+    val price_cents: Int? = null,
+    val active: Boolean? = null,
+)
+
 interface BackendService {
     @POST("/terminal/connection_token")
     suspend fun createConnectionToken(): ConnectionTokenResponse
@@ -64,6 +92,15 @@ interface BackendService {
 
     @GET("/pos/receipt/{payment_intent_id}")
     suspend fun getReceipt(@Path("payment_intent_id") paymentIntentId: String): ReceiptResponse
+
+    @GET("/products")
+    suspend fun listProducts(): ProductListResponse
+
+    @POST("/admin/products")
+    suspend fun createProduct(@Body request: CreateProductRequest): ProductDto
+
+    @PATCH("/admin/products/{id}")
+    suspend fun updateProduct(@Path("id") id: Int, @Body request: UpdateProductRequest): ProductDto
 }
 
 class AuthInterceptor(private val authStore: AuthStore) : okhttp3.Interceptor {

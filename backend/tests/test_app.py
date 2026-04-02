@@ -21,10 +21,12 @@ def app_module(monkeypatch):
 
     import app as app
     import device_registry as device_registry
+    import products as products
     import users as users
 
     importlib.reload(app)
     importlib.reload(device_registry)
+    importlib.reload(products)
     importlib.reload(users)
     return app
 
@@ -213,3 +215,83 @@ def test_webhook_invalid_signature(client, monkeypatch):
     response = test_client.post("/webhook", data=b"{}", headers={"Stripe-Signature": "invalid"})
     assert response.status_code == 400
     assert response.get_json()["error"] == "Invalid signature"
+
+
+def test_admin_product_flow(client):
+    test_client, _ = client
+
+    create_response = test_client.post(
+        "/admin/products",
+        json={"name": "Apfelschorle", "price_cents": 180},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert create_response.status_code == 201
+    created = create_response.get_json()
+    assert created["name"] == "Apfelschorle"
+    assert created["price_cents"] == 180
+    assert created["active"] is True
+
+    list_response = test_client.get(
+        "/admin/products",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert list_response.status_code == 200
+    products = list_response.get_json()["products"]
+    assert any(product["name"] == "Apfelschorle" for product in products)
+
+    patch_response = test_client.patch(
+        f"/admin/products/{created['id']}",
+        json={"active": False, "price_cents": 200},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert patch_response.status_code == 200
+    updated = patch_response.get_json()
+    assert updated["active"] is False
+    assert updated["price_cents"] == 200
+
+
+def test_admin_product_validation(client):
+    test_client, _ = client
+
+    response = test_client.post(
+        "/admin/products",
+        json={"name": "Ungültig", "price_cents": 0},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert response.status_code == 400
+    assert "größer als Null" in response.get_json()["error"]
+
+
+def test_active_products_for_authenticated_user(client):
+    test_client, _ = client
+
+    create_user_response = test_client.post(
+        "/admin/users",
+        json={"name": "Kasse", "role": "kassierer"},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert create_user_response.status_code == 201
+    kassierer_token = create_user_response.get_json()["api_token"]
+
+    create_product_response = test_client.post(
+        "/admin/products",
+        json={"name": "Mate", "price_cents": 220, "active": True},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert create_product_response.status_code == 201
+
+    inactive_product_response = test_client.post(
+        "/admin/products",
+        json={"name": "Test Inaktiv", "price_cents": 199, "active": False},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert inactive_product_response.status_code == 201
+
+    list_response = test_client.get(
+        "/products",
+        headers={"Authorization": f"Bearer {kassierer_token}"},
+    )
+    assert list_response.status_code == 200
+    products = list_response.get_json()["products"]
+    assert any(product["name"] == "Mate" for product in products)
+    assert all(product["name"] != "Test Inaktiv" for product in products)
