@@ -1,0 +1,72 @@
+package com.darc.ovl11.clubpayment
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
+
+class AuthViewModelTest {
+
+    @Test
+    fun `app neustart mit token im store fuehrt zu auto login state`() = runTest {
+        val authStore = mock<AuthStore>()
+        val backendService = mock<BackendService>()
+        val gespeicherteAuth = AuthData(token = "token-123", userName = "Max Mustermann")
+        whenever(authStore.authData).thenReturn(MutableStateFlow(gespeicherteAuth))
+        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow(null))
+
+        val viewModel = AuthViewModel(authStore, backendService)
+
+        assertEquals(gespeicherteAuth, viewModel.authState.value)
+    }
+
+    @Test
+    fun `login mit merken speichert token und benutzernamen`() = runTest {
+        val authStore = mock<AuthStore>()
+        val backendService = mock<BackendService>()
+        whenever(authStore.authData).thenReturn(MutableStateFlow(null))
+        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow(null))
+        whenever(backendService.login(LoginRequest("max", "geheim")))
+            .thenReturn(LoginResponse(token = "token-xyz", displayName = "Max"))
+        val viewModel = AuthViewModel(authStore, backendService)
+
+        viewModel.login(userName = "max", password = "geheim", rememberCredentials = true)
+        kotlinx.coroutines.test.advanceUntilIdle()
+
+        verify(authStore).saveAuth("token-xyz", "Max")
+        verify(authStore).saveRememberedUserName("max")
+    }
+
+    @Test
+    fun `logout loescht alle gespeicherten anmeldedaten`() = runTest {
+        val authStore = mock<AuthStore>()
+        val backendService = mock<BackendService>()
+        whenever(authStore.authData).thenReturn(MutableStateFlow(null))
+        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow("Max"))
+        val viewModel = AuthViewModel(authStore, backendService)
+
+        viewModel.logout()
+        kotlinx.coroutines.test.advanceUntilIdle()
+
+        verify(authStore).clearAuth()
+    }
+
+    @Test
+    fun `login ohne merken entfernt gemerkten benutzernamen`() = runTest {
+        val authStore = mock<AuthStore>()
+        val backendService = mock<BackendService>()
+        whenever(authStore.authData).thenReturn(MutableStateFlow(null))
+        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow("Max"))
+        whenever(backendService.login(LoginRequest("max", "geheim")))
+            .thenReturn(LoginResponse(token = "token-xyz", displayName = "Max"))
+        val viewModel = AuthViewModel(authStore, backendService)
+
+        viewModel.login(userName = "max", password = "geheim", rememberCredentials = false)
+        kotlinx.coroutines.test.advanceUntilIdle()
+
+        verify(authStore).clearRememberedCredentials()
+    }
+}
