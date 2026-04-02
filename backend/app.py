@@ -2,7 +2,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from flask_cors import CORS
 import stripe
 
@@ -15,6 +15,7 @@ from users import Role, get_user_store
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -33,6 +34,18 @@ allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin
 CORS(app, origins=allowed_origins or "*")
 
 WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+
+def _get_admin_user_from_session():
+    user_id = session.get("admin_user_id")
+    if not isinstance(user_id, int):
+        return None
+    store = get_user_store()
+    user = store.get_by_id(user_id)
+    if not user or not user.active or user.role != Role.ADMIN:
+        session.pop("admin_user_id", None)
+        return None
+    return user
 
 
 @app.route("/terminal/connection_token", methods=["POST"])
@@ -230,6 +243,96 @@ def login():
         "token": user.api_token,
         "display_name": user.name,
     })
+
+
+@app.route("/admin/web/login", methods=["GET", "POST"])
+def admin_web_login():
+    if _get_admin_user_from_session():
+        return redirect(url_for("admin_web_users"))
+
+    error_message = None
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        if not isinstance(username, str) or not username.strip():
+            error_message = "username ist erforderlich"
+        elif not isinstance(password, str) or not password.strip():
+            error_message = "password ist erforderlich"
+        else:
+            store = get_user_store()
+            user = store.authenticate(username.strip(), password)
+            if not user:
+                error_message = "Benutzername oder Passwort ungültig"
+            elif not user.active:
+                error_message = "Benutzer ist deaktiviert"
+            elif user.role != Role.ADMIN:
+                error_message = "Nur Administratoren dürfen diese Aktion ausführen"
+            else:
+                session["admin_user_id"] = user.id
+                return redirect(url_for("admin_web_users"))
+
+    return render_template("admin_login.html", error_message=error_message)
+
+
+@app.route("/admin/web/logout", methods=["POST"])
+def admin_web_logout():
+    session.pop("admin_user_id", None)
+    return redirect(url_for("admin_web_login"))
+
+
+@app.route("/admin/web/users", methods=["GET", "POST"])
+def admin_web_users():
+    admin_user = _get_admin_user_from_session()
+    if not admin_user:
+        return redirect(url_for("admin_web_login"))
+
+    error_message = None
+    if request.method == "POST":
+        name = request.form.get("name")
+        role_value = request.form.get("role")
+        username = request.form.get("username")
+        password = request.form.get("password")
+        active = request.form.get("active") == "on"
+        device_id = request.form.get("device_id")
+
+        if not isinstance(name, str) or not name.strip():
+            error_message = "name ist erforderlich"
+        elif role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
+            error_message = "role muss 'admin' oder 'kassierer' sein"
+        elif not isinstance(username, str) or not username.strip():
+            error_message = "username ist erforderlich"
+        elif not isinstance(password, str) or not password.strip():
+            error_message = "password ist erforderlich"
+        else:
+            store = get_user_store()
+            normalized_username = username.strip()
+            if store.get_by_username(normalized_username):
+                error_message = "username ist bereits vergeben"
+            else:
+                created_user = store.create_user(
+                    name=name.strip(),
+                    role=Role(role_value),
+                    active=active,
+                    username=normalized_username,
+                    password_hash=store.hash_password(password),
+                )
+                if isinstance(device_id, str) and device_id.strip():
+                    registry = get_device_registry()
+                    registry.assign_device(device_id=device_id.strip(), user_id=created_user.id)
+                return redirect(url_for("admin_web_users"))
+
+    store = get_user_store()
+    users = list(store.list_users())
+    registry = get_device_registry()
+    assignments = {assignment.user_id: assignment.device_id for assignment in registry.list_devices()}
+    return render_template(
+        "admin_users.html",
+        admin_name=admin_user.name,
+        users=users,
+        assignments=assignments,
+        error_message=error_message,
+    )
 
 
 @app.route("/admin/users", methods=["GET"])
