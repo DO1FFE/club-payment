@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import os
 import secrets
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Iterable, Optional
+from typing import Iterable, Optional
 
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from database import SessionLocal, UserRecord, init_database
 
 
 class Role(str, Enum):
@@ -24,12 +28,22 @@ class User:
 
 
 class UserStore:
-    def __init__(self) -> None:
-        self._users: Dict[int, User] = {}
-        self._next_id = 1
+    @staticmethod
+    def _to_user(record: UserRecord) -> User:
+        return User(
+            id=record.id,
+            name=record.name,
+            role=Role(record.role),
+            active=record.active,
+            api_token=record.api_token,
+            username=record.username,
+            password_hash=record.password_hash,
+        )
 
     def list_users(self) -> Iterable[User]:
-        return list(self._users.values())
+        with SessionLocal() as session:
+            records = session.query(UserRecord).order_by(UserRecord.id.asc()).all()
+            return [self._to_user(record) for record in records]
 
     def create_user(
         self,
@@ -41,33 +55,34 @@ class UserStore:
         password_hash: Optional[str] = None,
     ) -> User:
         token = api_token or secrets.token_urlsafe(32)
-        user = User(
-            id=self._next_id,
-            name=name,
-            role=role,
-            active=active,
-            api_token=token,
-            username=username,
-            password_hash=password_hash,
-        )
-        self._users[self._next_id] = user
-        self._next_id += 1
-        return user
+        with SessionLocal() as session:
+            record = UserRecord(
+                name=name,
+                role=role.value,
+                active=active,
+                api_token=token,
+                username=username,
+                password_hash=password_hash,
+            )
+            session.add(record)
+            session.commit()
+            session.refresh(record)
+            return self._to_user(record)
 
     def get_by_token(self, token: str) -> Optional[User]:
-        for user in self._users.values():
-            if user.api_token == token:
-                return user
-        return None
+        with SessionLocal() as session:
+            record = session.query(UserRecord).filter(UserRecord.api_token == token).first()
+            return self._to_user(record) if record else None
 
     def get_by_id(self, user_id: int) -> Optional[User]:
-        return self._users.get(user_id)
+        with SessionLocal() as session:
+            record = session.get(UserRecord, user_id)
+            return self._to_user(record) if record else None
 
     def get_by_username(self, username: str) -> Optional[User]:
-        for user in self._users.values():
-            if user.username == username:
-                return user
-        return None
+        with SessionLocal() as session:
+            record = session.query(UserRecord).filter(UserRecord.username == username).first()
+            return self._to_user(record) if record else None
 
     def authenticate(self, username: str, password: str) -> Optional[User]:
         user = self.get_by_username(username)
@@ -88,37 +103,50 @@ class UserStore:
         role: Optional[Role] = None,
         active: Optional[bool] = None,
     ) -> Optional[User]:
-        user = self._users.get(user_id)
-        if not user:
-            return None
-        if name is not None:
-            user.name = name
-        if role is not None:
-            user.role = role
-        if active is not None:
-            user.active = active
-        return user
+        with SessionLocal() as session:
+            record = session.get(UserRecord, user_id)
+            if not record:
+                return None
+            if name is not None:
+                record.name = name
+            if role is not None:
+                record.role = role.value
+            if active is not None:
+                record.active = active
+            session.commit()
+            session.refresh(record)
+            return self._to_user(record)
 
 
 _STORE: Optional[UserStore] = None
 
 
+def _bootstrap_admin(store: UserStore) -> None:
+    admin_token = os.getenv("ADMIN_API_TOKEN")
+    if not admin_token:
+        return
+
+    if store.get_by_token(admin_token):
+        return
+
+    admin_name = os.getenv("ADMIN_NAME", "Admin")
+    admin_username = os.getenv("ADMIN_USERNAME", admin_name)
+    admin_password = os.getenv("ADMIN_PASSWORD")
+    password_hash = store.hash_password(admin_password) if admin_password else None
+    store.create_user(
+        name=admin_name,
+        role=Role.ADMIN,
+        active=True,
+        api_token=admin_token,
+        username=admin_username,
+        password_hash=password_hash,
+    )
+
+
 def get_user_store() -> UserStore:
     global _STORE  # noqa: PLW0603
     if _STORE is None:
+        init_database()
         _STORE = UserStore()
-        admin_token = os.getenv("ADMIN_API_TOKEN")
-        if admin_token:
-            admin_name = os.getenv("ADMIN_NAME", "Admin")
-            admin_username = os.getenv("ADMIN_USERNAME", admin_name)
-            admin_password = os.getenv("ADMIN_PASSWORD")
-            password_hash = _STORE.hash_password(admin_password) if admin_password else None
-            _STORE.create_user(
-                name=admin_name,
-                role=Role.ADMIN,
-                active=True,
-                api_token=admin_token,
-                username=admin_username,
-                password_hash=password_hash,
-            )
+        _bootstrap_admin(_STORE)
     return _STORE
