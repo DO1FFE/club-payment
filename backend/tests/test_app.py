@@ -326,3 +326,67 @@ def test_active_products_for_authenticated_user(client):
     products = list_response.get_json()["products"]
     assert any(product["name"] == "Mate" for product in products)
     assert all(product["name"] != "Test Inaktiv" for product in products)
+
+
+def test_interactive_admin_bootstrap_when_no_users(monkeypatch, tmp_path):
+    monkeypatch.delenv("ADMIN_API_TOKEN", raising=False)
+    monkeypatch.delenv("ADMIN_NAME", raising=False)
+    monkeypatch.delenv("ADMIN_USERNAME", raising=False)
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'interactive.sqlite3'}")
+
+    backend_root = Path(__file__).resolve().parents[1]
+    if str(backend_root) not in sys.path:
+        sys.path.insert(0, str(backend_root))
+
+    import database as database
+    import users as users
+
+    importlib.reload(database)
+    importlib.reload(users)
+
+    inputs = iter(["erstadmin", "Erster Admin"])
+    passwords = iter(["supergeheim", "supergeheim"])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+    monkeypatch.setattr(users, "getpass", lambda _: next(passwords))
+
+    store = users.get_user_store()
+    admin = store.get_by_username("erstadmin")
+
+    assert admin is not None
+    assert admin.role == users.Role.ADMIN
+    assert admin.active is True
+    assert admin.name == "Erster Admin"
+
+
+def test_no_interactive_bootstrap_when_admin_exists(monkeypatch, tmp_path):
+    monkeypatch.setenv("ADMIN_API_TOKEN", "admin-token")
+    monkeypatch.setenv("ADMIN_NAME", "Admin Nutzer")
+    monkeypatch.setenv("ADMIN_USERNAME", "admin")
+    monkeypatch.setenv("ADMIN_PASSWORD", "admin-passwort")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'existing-admin.sqlite3'}")
+
+    backend_root = Path(__file__).resolve().parents[1]
+    if str(backend_root) not in sys.path:
+        sys.path.insert(0, str(backend_root))
+
+    import database as database
+    import users as users
+
+    importlib.reload(database)
+    importlib.reload(users)
+
+    called = {"interactive": False}
+
+    def fake_bootstrap(_: users.UserStore) -> None:
+        called["interactive"] = True
+
+    monkeypatch.setattr(users, "_bootstrap_admin_interactive", fake_bootstrap)
+
+    store = users.get_user_store()
+    admin = store.get_by_username("admin")
+
+    assert admin is not None
+    assert admin.role == users.Role.ADMIN
+    assert called["interactive"] is False

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from getpass import getpass
 from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable, Optional
@@ -84,6 +85,11 @@ class UserStore:
             record = session.query(UserRecord).filter(UserRecord.username == username).first()
             return self._to_user(record) if record else None
 
+    def has_admin_user(self) -> bool:
+        with SessionLocal() as session:
+            record = session.query(UserRecord.id).filter(UserRecord.role == Role.ADMIN.value).first()
+            return record is not None
+
     def authenticate(self, username: str, password: str) -> Optional[User]:
         user = self.get_by_username(username)
         if not user or not user.password_hash:
@@ -143,10 +149,56 @@ def _bootstrap_admin(store: UserStore) -> None:
     )
 
 
+def _prompt_non_empty_input(prompt: str) -> str:
+    while True:
+        value = input(prompt).strip()
+        if value:
+            return value
+        print("Eingabe darf nicht leer sein.")
+
+
+def _prompt_password(min_length: int = 8) -> str:
+    while True:
+        password = getpass("Passwort für Admin eingeben: ").strip()
+        if len(password) < min_length:
+            print(f"Passwort muss mindestens {min_length} Zeichen lang sein.")
+            continue
+        password_confirm = getpass("Passwort bestätigen: ").strip()
+        if password != password_confirm:
+            print("Passwörter stimmen nicht überein.")
+            continue
+        return password
+
+
+def _bootstrap_admin_interactive(store: UserStore) -> None:
+    print("Kein Admin-Benutzer gefunden. Initiale Admin-Anlage wird gestartet.")
+
+    while True:
+        username = _prompt_non_empty_input("Admin-Benutzername: ")
+        if store.get_by_username(username):
+            print("Benutzername ist bereits vergeben.")
+            continue
+        break
+
+    password = _prompt_password()
+    display_name = input("Anzeigename (optional, Enter für Benutzername): ").strip() or username
+
+    store.create_user(
+        name=display_name,
+        role=Role.ADMIN,
+        active=True,
+        username=username,
+        password_hash=store.hash_password(password),
+    )
+    print(f"Admin-Benutzer '{username}' wurde erfolgreich erstellt.")
+
+
 def get_user_store() -> UserStore:
     global _STORE  # noqa: PLW0603
     if _STORE is None:
         init_database()
         _STORE = UserStore()
         _bootstrap_admin(_STORE)
+        if not _STORE.has_admin_user():
+            _bootstrap_admin_interactive(_STORE)
     return _STORE
