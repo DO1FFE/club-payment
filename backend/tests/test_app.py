@@ -128,7 +128,12 @@ def test_admin_user_flow(client):
 
     create_response = test_client.post(
         "/admin/users",
-        json={"name": "Kassierer 1", "role": "kassierer"},
+        json={
+            "name": "Kassierer 1",
+            "role": "kassierer",
+            "username": "kassierer1",
+            "password": "passwort-1",
+        },
         headers={"Authorization": "Bearer admin-token"},
     )
     assert create_response.status_code == 201
@@ -160,7 +165,12 @@ def test_admin_device_flow(client):
 
     create_response = test_client.post(
         "/admin/users",
-        json={"name": "Kassierer 2", "role": "kassierer"},
+        json={
+            "name": "Kassierer 2",
+            "role": "kassierer",
+            "username": "kassierer2",
+            "password": "passwort-2",
+        },
         headers={"Authorization": "Bearer admin-token"},
     )
     assert create_response.status_code == 201
@@ -181,6 +191,19 @@ def test_admin_device_flow(client):
     assert list_response.status_code == 200
     devices = list_response.get_json()["devices"]
     assert any(device["device_id"] == "kasse-02" for device in devices)
+
+
+def test_create_user_requires_credentials(client):
+    test_client, _ = client
+
+    response = test_client.post(
+        "/admin/users",
+        json={"name": "Ohne Login", "role": "kassierer"},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "username ist erforderlich"
 
 
 def test_login_success(client):
@@ -270,7 +293,12 @@ def test_active_products_for_authenticated_user(client):
 
     create_user_response = test_client.post(
         "/admin/users",
-        json={"name": "Kasse", "role": "kassierer"},
+        json={
+            "name": "Kasse",
+            "role": "kassierer",
+            "username": "kasse-user",
+            "password": "passwort-kasse",
+        },
         headers={"Authorization": "Bearer admin-token"},
     )
     assert create_user_response.status_code == 201

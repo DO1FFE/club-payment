@@ -179,24 +179,23 @@ def create_user():
         raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
     if not isinstance(active, bool):
         raise APIError("active muss ein boolescher Wert sein", 400)
-    if username is not None and (not isinstance(username, str) or not username.strip()):
-        raise APIError("username darf nicht leer sein", 400)
-    if password is not None and (not isinstance(password, str) or not password.strip()):
-        raise APIError("password darf nicht leer sein", 400)
-    if (username is None) != (password is None):
-        raise APIError("username und password müssen gemeinsam gesetzt werden", 400)
+    if not isinstance(username, str) or not username.strip():
+        raise APIError("username ist erforderlich", 400)
+    if not isinstance(password, str) or not password.strip():
+        raise APIError("password ist erforderlich", 400)
 
     store = get_user_store()
-    if isinstance(username, str) and store.get_by_username(username):
+    normalized_username = username.strip()
+    if store.get_by_username(normalized_username):
         raise APIError("username ist bereits vergeben", 400)
 
-    password_hash = store.hash_password(password) if isinstance(password, str) else None
+    password_hash = store.hash_password(password)
     user = store.create_user(
         name=name.strip(),
         role=Role(role_value),
         active=active,
         api_token=api_token,
-        username=username.strip() if isinstance(username, str) else None,
+        username=normalized_username,
         password_hash=password_hash,
     )
     return jsonify({
