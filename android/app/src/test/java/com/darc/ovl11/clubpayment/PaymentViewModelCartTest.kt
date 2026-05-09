@@ -38,6 +38,7 @@ class PaymentViewModelCartTest {
     fun `isPayButtonEnabled ist nur bei positivem betrag und ohne laufende zahlung aktiv`() {
         assertFalse(isPayButtonEnabled(0, PaymentStatus.Idle))
         assertTrue(isPayButtonEnabled(100, PaymentStatus.Idle))
+        assertFalse(isPayButtonEnabled(100, PaymentStatus.ConnectingReader))
         assertFalse(isPayButtonEnabled(100, PaymentStatus.Processing))
         assertTrue(isPayButtonEnabled(100, PaymentStatus.Error("Fehler")))
     }

@@ -46,5 +46,14 @@ class DeviceAssignmentRecord(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
 
+class ProductRecord(Base):
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    price_cents = Column(Integer, nullable=False)
+    active = Column(Boolean, nullable=False, default=True)
+
+
 def init_database() -> None:
     Base.metadata.create_all(bind=engine)

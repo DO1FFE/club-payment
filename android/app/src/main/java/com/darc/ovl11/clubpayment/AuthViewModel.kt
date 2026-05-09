@@ -20,10 +20,10 @@ class AuthViewModel(
     private val backendService: BackendService,
 ) : ViewModel() {
     val authState: StateFlow<AuthData?> = authStore.authData
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val rememberedUserName: StateFlow<String?> = authStore.rememberedUserName
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _loginStatus = MutableStateFlow<LoginStatus>(LoginStatus.Idle)
     val loginStatus: StateFlow<LoginStatus> = _loginStatus.asStateFlow()
@@ -41,7 +41,7 @@ class AuthViewModel(
                 }
                 _loginStatus.value = LoginStatus.Idle
             } catch (e: Exception) {
-                _loginStatus.value = LoginStatus.Error(e.message ?: "Login fehlgeschlagen")
+                _loginStatus.value = LoginStatus.Error(e.backendErrorMessage("Login fehlgeschlagen"))
             }
         }
     }

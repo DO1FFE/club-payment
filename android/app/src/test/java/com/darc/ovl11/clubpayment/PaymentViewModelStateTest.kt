@@ -2,11 +2,14 @@ package com.darc.ovl11.clubpayment
 
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Rule
 import org.junit.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 class PaymentViewModelStateTest {
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
 
     private val cola = ProductDto(id = 1, name = "Cola", price_cents = 250, active = true)
 

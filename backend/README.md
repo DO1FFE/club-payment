@@ -14,7 +14,7 @@ This Flask service exposes minimal endpoints to support Stripe Terminal Tap to P
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env  # then edit with your keys
 ```
 
@@ -22,6 +22,8 @@ Environment variables used:
 
 - `STRIPE_SECRET_KEY` – required secret key
 - `STRIPE_WEBHOOK_SECRET` – optional, enables webhook signature verification
+- `FLASK_SECRET_KEY` – required for stable admin web sessions in non-development deployments
+- `ADMIN_API_TOKEN`, `ADMIN_NAME`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` – optional initial admin bootstrap
 - `ALLOWED_ORIGINS` – comma-separated CORS origins (use `*` to allow all during development)
 - `PORT` – port to bind (default 5000)
 
@@ -39,7 +41,9 @@ python app.py
 
 ## Endpoints
 
-- `POST /terminal/connection_token` → returns `{ "secret": "..." }` for Stripe Terminal SDK
+- `GET /admin/web/login` und `/admin/web` -> Admin-Weboberflaeche fuer Nutzer, Geraete und Produkte
+
+- `POST /terminal/connection_token` → benötigt `Authorization: Bearer <token>`, returns `{ "secret": "..." }` for Stripe Terminal SDK
 - `POST /pos/create_intent` → benötigt `Authorization: Bearer <token>`, body `{ "amount_cents": 150, "currency": "eur", "item": "Cola/Bier", "device": "Pixel" }`, Kassierer wird serverseitig aus dem Token gesetzt
 - `POST /webhook` (optional) → verifies Stripe signature and appends event info to `payments.log`
 - `POST /admin/users` → benötigt Admin-Token, legt Nutzer an (`name`, `role`, optional `active`, `api_token`) und liefert `api_token` zurück
@@ -47,6 +51,8 @@ python app.py
 - `PATCH /admin/users/<id>` → benötigt Admin-Token, ändert `name`, `role` und/oder `active`
 - `POST /admin/devices` → benötigt Admin-Token, weist ein Gerät einem Nutzer zu (`device_id`, `user_id`)
 - `GET /admin/devices` → benötigt Admin-Token, listet Gerätezuordnungen
+
+- `POST /admin/products`, `GET /admin/products`, `PATCH /admin/products/<id>` -> Produkte verwalten
 
 Errors are returned as JSON with an `error` key and HTTP status code.
 

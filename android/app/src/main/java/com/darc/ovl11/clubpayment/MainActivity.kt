@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -121,7 +122,7 @@ class PaymentViewModel(
                 _products.value = response.products.filter { it.active }
             } catch (e: Exception) {
                 _products.value = emptyList()
-                _productsError.value = e.message ?: "Produkte konnten nicht geladen werden"
+                _productsError.value = e.backendErrorMessage("Produkte konnten nicht geladen werden")
             } finally {
                 _productsLoading.value = false
             }
@@ -159,22 +160,29 @@ class PaymentViewModel(
                 }
                 _status.value = PaymentStatus.CreatingIntent
                 val intent = terminalManager.createIntent(amountCents, itemLabel, userName, deviceName)
+                _status.value = PaymentStatus.ConnectingReader
+                terminalManager.ensureReaderConnected()
                 _status.value = PaymentStatus.WaitingForTap
                 val collected = terminalManager.collectPayment(intent)
                 _status.value = PaymentStatus.Processing
                 val processed = terminalManager.processPayment(collected)
                 _status.value = PaymentStatus.FetchingReceipt
-                val amountCents = processed.amount ?: intent.amount!!
-                val receiptResult = fetchReceiptUrl(processed.id)
+                val processedIntentId = processed.id ?: intent.id
+                if (processedIntentId.isNullOrBlank()) {
+                    _status.value = PaymentStatus.Error("PaymentIntent-ID fehlt")
+                    return@launch
+                }
+                val paidAmountCents = processed.amount.toInt()
+                val receiptResult = fetchReceiptUrl(processedIntentId)
                 _status.value = PaymentStatus.Success(
-                    amountCents = amountCents,
-                    intentId = processed.id,
+                    amountCents = paidAmountCents,
+                    intentId = processedIntentId,
                     receiptUrl = receiptResult.first,
                     receiptError = receiptResult.second
                 )
                 clearCart()
             } catch (e: Exception) {
-                _status.value = PaymentStatus.Error(e.message ?: "Unbekannter Fehler")
+                _status.value = PaymentStatus.Error(e.backendErrorMessage("Unbekannter Fehler"))
             }
         }
     }
@@ -184,7 +192,7 @@ class PaymentViewModel(
             val response = backendService.getReceipt(paymentIntentId)
             Pair(response.receipt_url, null)
         } catch (e: Exception) {
-            Pair(null, e.message ?: "Beleg konnte nicht geladen werden")
+            Pair(null, e.backendErrorMessage("Beleg konnte nicht geladen werden"))
         }
     }
 }
@@ -193,9 +201,10 @@ class PaymentViewModel(
 @Composable
 fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
     val authState by authViewModel.authState.collectAsState()
+    val deviceName = viewModel.deviceName
 
     if (authState == null) {
-        LoginScreen(authViewModel)
+        LoginScreen(authViewModel, deviceName)
     } else {
         androidx.compose.runtime.LaunchedEffect(authState?.token) {
             viewModel.loadProducts()
@@ -203,13 +212,14 @@ fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
         PaymentScreen(
             viewModel = viewModel,
             userName = authState?.userName.orEmpty(),
+            deviceName = deviceName,
             onLogout = { authViewModel.logout() }
         )
     }
 }
 
 @Composable
-fun LoginScreen(authViewModel: AuthViewModel) {
+fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
     var userName by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var rememberCredentials by remember { mutableStateOf(false) }
@@ -259,6 +269,10 @@ fun LoginScreen(authViewModel: AuthViewModel) {
             text = "Angemeldet bleiben nutzt ausschließlich Token-Speicherung.",
             style = MaterialTheme.typography.bodySmall
         )
+        Text(
+            text = "Geräte-ID: $deviceName",
+            style = MaterialTheme.typography.bodySmall
+        )
         Button(
             onClick = { authViewModel.login(userName.trim(), password, rememberCredentials) },
             enabled = userName.isNotBlank() && password.isNotBlank() && loginStatus !is LoginStatus.Loading,
@@ -277,7 +291,7 @@ fun LoginScreen(authViewModel: AuthViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PaymentScreen(viewModel: PaymentViewModel, userName: String, onLogout: () -> Unit) {
+fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: String, onLogout: () -> Unit) {
     val status by viewModel.status.collectAsState()
     val products by viewModel.products.collectAsState()
     val productsLoading by viewModel.productsLoading.collectAsState()
@@ -300,6 +314,7 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, onLogout: () ->
             Column {
                 Text(text = "DARC e.V. OV L11 – Getränke", style = MaterialTheme.typography.headlineSmall)
                 Text(text = "Angemeldet als $userName", style = MaterialTheme.typography.bodyMedium)
+                Text(text = "Geräte-ID: $deviceName", style = MaterialTheme.typography.bodySmall)
             }
             Button(onClick = onLogout) {
                 Text("Abmelden")
@@ -399,7 +414,7 @@ fun CartCard(
 }
 
 @Composable
-fun PriceButton(label: String, amountCents: Int, onClick: () -> Unit) {
+fun RowScope.PriceButton(label: String, amountCents: Int, onClick: () -> Unit) {
     val formatter = NumberFormat.getCurrencyInstance(Locale.GERMANY)
     val amountFormatted = formatter.format(amountCents / 100.0)
     Button(onClick = onClick, modifier = Modifier.weight(1f)) {
@@ -415,6 +430,7 @@ fun StatusCard(status: PaymentStatus) {
     val message = when (status) {
         PaymentStatus.Idle -> "Bereit für Zahlung"
         PaymentStatus.CreatingIntent -> "Intent wird erstellt..."
+        PaymentStatus.ConnectingReader -> "NFC-Leser wird verbunden"
         PaymentStatus.WaitingForTap -> "Bitte Karte/Handy an das Gerät halten"
         PaymentStatus.Processing -> "Zahlung wird verarbeitet"
         PaymentStatus.FetchingReceipt -> "Beleg wird abgerufen..."
@@ -503,6 +519,7 @@ fun createItemLabel(products: List<ProductDto>, selectedItems: Map<Int, Int>): S
 
 fun isPayButtonEnabled(totalAmountCents: Int, status: PaymentStatus): Boolean {
     val paymentInProgress = status is PaymentStatus.CreatingIntent ||
+        status is PaymentStatus.ConnectingReader ||
         status is PaymentStatus.WaitingForTap ||
         status is PaymentStatus.Processing ||
         status is PaymentStatus.FetchingReceipt
