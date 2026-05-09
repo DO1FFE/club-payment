@@ -53,7 +53,7 @@ jobs:
           echo "sdk.dir=${SDK_DIR}" > android/local.properties
           echo "BACKEND_BASE_URL=${BACKEND_BASE_URL}" >> android/local.properties
         env:
-          BACKEND_BASE_URL: https://example.com
+          BACKEND_BASE_URL: http://payment.lima11.de/
 
       - name: Debug-APK bauen
         run: |
