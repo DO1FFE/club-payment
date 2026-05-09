@@ -1,14 +1,18 @@
 package com.darc.ovl11.clubpayment
 
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Rule
 import org.junit.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 class AuthViewModelTest {
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
 
     @Test
     fun `app neustart mit token im store fuehrt zu auto login state`() = runTest {
@@ -19,6 +23,7 @@ class AuthViewModelTest {
         whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow(null))
 
         val viewModel = AuthViewModel(authStore, backendService)
+        advanceUntilIdle()
 
         assertEquals(gespeicherteAuth, viewModel.authState.value)
     }
@@ -34,7 +39,7 @@ class AuthViewModelTest {
         val viewModel = AuthViewModel(authStore, backendService)
 
         viewModel.login(userName = "max", password = "geheim", rememberCredentials = true)
-        kotlinx.coroutines.test.advanceUntilIdle()
+        advanceUntilIdle()
 
         verify(authStore).saveAuth("token-xyz", "Max")
         verify(authStore).saveRememberedUserName("max")
@@ -49,7 +54,7 @@ class AuthViewModelTest {
         val viewModel = AuthViewModel(authStore, backendService)
 
         viewModel.logout()
-        kotlinx.coroutines.test.advanceUntilIdle()
+        advanceUntilIdle()
 
         verify(authStore).clearAuth()
     }
@@ -65,7 +70,7 @@ class AuthViewModelTest {
         val viewModel = AuthViewModel(authStore, backendService)
 
         viewModel.login(userName = "max", password = "geheim", rememberCredentials = false)
-        kotlinx.coroutines.test.advanceUntilIdle()
+        advanceUntilIdle()
 
         verify(authStore).clearRememberedCredentials()
     }

@@ -7,6 +7,11 @@
   <body>
     <h1>Nutzerverwaltung</h1>
     <p>Angemeldet als: {{ admin_name }}</p>
+    <nav>
+      <a href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
+      |
+      <a href="{{ url_for('admin_web_products') }}">Produkte</a>
+    </nav>
     <form method="post" action="{{ url_for('admin_web_logout') }}">
       <button type="submit">Abmelden</button>
     </form>
@@ -24,7 +29,7 @@
           <th>Rolle</th>
           <th>Aktiv</th>
           <th>Username</th>
-          <th>Gerät</th>
+          <th>Ger&auml;t</th>
         </tr>
       </thead>
       <tbody>
@@ -61,10 +66,47 @@
       <label for="active">Aktiv</label>
       <input id="active" name="active" type="checkbox" checked>
       <br>
-      <label for="device_id">Gerätezuweisung (optional)</label>
+      <label for="device_id">Ger&auml;tezuweisung (optional)</label>
       <input id="device_id" name="device_id" type="text">
       <br>
       <button type="submit">Nutzer erstellen</button>
     </form>
+
+    <h2>Endger&auml;t bestehendem Nutzer zuweisen</h2>
+    <form method="post" action="{{ url_for('admin_web_devices') }}">
+      <label for="assign_device_id">Ger&auml;te-ID</label>
+      <input id="assign_device_id" name="device_id" type="text" required>
+      <br>
+      <label for="assign_user_id">Nutzer</label>
+      <select id="assign_user_id" name="user_id" required>
+        {% for user in users %}
+        <option value="{{ user.id }}">{{ user.name }} ({{ user.username or user.id }})</option>
+        {% endfor %}
+      </select>
+      <br>
+      <button type="submit">Ger&auml;t zuweisen</button>
+    </form>
+
+    <h2>Vorhandene Endger&auml;te</h2>
+    <table border="1" cellpadding="4">
+      <thead>
+        <tr>
+          <th>Ger&auml;te-ID</th>
+          <th>Nutzer</th>
+          <th>Rolle</th>
+          <th>Aktiv</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for device in devices %}
+        <tr>
+          <td>{{ device.device_id }}</td>
+          <td>{{ device.user.name if device.user else '-' }}</td>
+          <td>{{ device.user.role.value if device.user else '-' }}</td>
+          <td>{{ 'ja' if device.user and device.user.active else 'nein' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </body>
 </html>

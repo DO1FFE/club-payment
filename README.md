@@ -14,7 +14,7 @@ Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für
 - Android Studio Iguana/Koala+
 - JDK 17
 - Android SDK 34
-- Gradle Wrapper-Skripte liegen bei; die Wrapper-JAR musst du lokal erzeugen (siehe unten)
+- Gradle Wrapper liegt bei
 
 ## Projektstruktur
 - `backend/` – Flask-Service mit Stripe-Terminal-Endpunkten
@@ -25,7 +25,7 @@ Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 cp .env.example .env  # STRIPE_SECRET_KEY usw. eintragen
 python app.py  # läuft auf Port 5000
 ```
@@ -33,19 +33,23 @@ python app.py  # läuft auf Port 5000
 ## Android-App konfigurieren
 1. `android/gradle.properties` enthält Platzhalter:
    - `BACKEND_BASE_URL=https://example.com`
-   - `LOCATION_ID=` (optional, falls du explizit ein Terminal-Location-ID setzen willst)
+   - `LOCATION_ID=` (fuer echte Stripe Tap-to-Pay-Zahlungen erforderlich)
 2. Für lokale Emulator-Tests: setze `BACKEND_BASE_URL=http://10.0.2.2:5000`.
 3. Alternativ kannst du in `android/local.properties` dieselben Keys setzen, sie überschreiben `gradle.properties`.
 4. Keine Secret Keys in der App; die App holt Connection Token & PaymentIntents ausschließlich vom Backend.
 
+5. Die App zeigt ihre Geraete-ID im Login- und Zahlungsbildschirm an; diese ID muss im Admin-Web einem Nutzer zugewiesen werden.
+6. Die App verbindet vor dem NFC-Tap automatisch einen Local-Mobile/Tap-to-Pay-Reader. Ohne `LOCATION_ID` bricht der echte NFC-Zahlungsfluss mit einer klaren Fehlermeldung ab.
+
 ## APK bauen
 ```bash
 cd android
-# Gradle-Wrapper-JAR erzeugen, falls nicht vorhanden
-gradle wrapper --gradle-version 8.7
-
 ./gradlew :app:assembleDebug      # Debug APK
 ./gradlew :app:assembleRelease    # Release (unsigned, falls keine Signatur konfiguriert)
+```
+Falls der Checkout in einem OneDrive-Ordner liegt und Gradle über ReparsePoint-/Dateisperren stolpert, kannst du Build-Artefakte lokal auslagern:
+```bash
+./gradlew :app:assembleDebug -PCLUB_PAYMENT_BUILD_DIR="$LOCALAPPDATA/CodexTools/club-payment-gradle-build"
 ```
 Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine Debug-APK als Artefakt.
 
@@ -69,7 +73,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 - Auth-Persistenz-Entscheidung (Android): **Token-only für „Angemeldet bleiben“**. Es werden keine Passwörter gespeichert. Optional kann nur der Benutzername für die Login-Vorbelegung gespeichert werden.
 
 ## Backend-API aus der App
-- `POST /terminal/connection_token` → holt Connection Token für das Terminal SDK
+- `POST /terminal/connection_token` → holt mit `Authorization: Bearer <token>` ein Connection Token für das Terminal SDK
 - `POST /pos/create_intent` → erzeugt PaymentIntent (EUR, card_present) mit Metadaten (`club`, `item`, `kassierer`, `device`)
 
 Weitere Details je Ordner:

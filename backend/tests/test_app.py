@@ -53,9 +53,21 @@ def test_connection_token_success(client, monkeypatch):
 
     monkeypatch.setattr(app_module.stripe.terminal.ConnectionToken, "create", staticmethod(fake_create))
 
-    response = test_client.post("/terminal/connection_token")
+    response = test_client.post(
+        "/terminal/connection_token",
+        headers={"Authorization": "Bearer admin-token"},
+    )
     assert response.status_code == 200
     assert response.get_json() == {"secret": "token_secret"}
+
+
+def test_connection_token_requires_auth(client):
+    test_client, _ = client
+
+    response = test_client.post("/terminal/connection_token")
+
+    assert response.status_code == 401
+    assert response.get_json()["error"] == "Authorization-Header fehlt"
 
 
 def test_create_payment_intent_success(client, monkeypatch):
@@ -288,6 +300,30 @@ def test_admin_product_validation(client):
     assert "größer als Null" in response.get_json()["error"]
 
 
+def test_products_are_persisted_in_database(client):
+    test_client, _ = client
+    import products as products_module
+
+    create_response = test_client.post(
+        "/admin/products",
+        json={"name": "Persistente Mate", "price_cents": 230},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert create_response.status_code == 201
+    product_id = create_response.get_json()["id"]
+
+    products_module._STORE = None
+    fresh_store = products_module.get_product_store()
+    persisted_product = next(
+        product for product in fresh_store.list_products()
+        if product.id == product_id
+    )
+
+    assert persisted_product.name == "Persistente Mate"
+    assert persisted_product.price_cents == 230
+    assert persisted_product.active is True
+
+
 def test_active_products_for_authenticated_user(client):
     test_client, _ = client
 
@@ -466,3 +502,74 @@ def test_admin_web_create_user_success_with_device(client):
     assignment = registry.get_device("web-kasse-1")
     assert assignment is not None
     assert assignment.user_id == user.id
+
+
+def test_admin_web_assign_device_to_existing_user(client):
+    test_client, app_module = client
+    login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+    assert login_response.status_code == 302
+
+    store = app_module.get_user_store()
+    user = store.create_user(
+        name="Bestehender Kassierer",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="bestehende-kasse",
+        password_hash=store.hash_password("web-passwort"),
+    )
+
+    response = test_client.post(
+        "/admin/web/devices",
+        data={"device_id": "web-kasse-2", "user_id": str(user.id)},
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin/web/users")
+    assignment = app_module.get_device_registry().get_device("web-kasse-2")
+    assert assignment is not None
+    assert assignment.user_id == user.id
+
+
+def test_admin_web_product_page_create_and_update(client):
+    test_client, app_module = client
+    login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+    assert login_response.status_code == 302
+
+    page_response = test_client.get("/admin/web/products")
+    assert page_response.status_code == 200
+    assert "Produktverwaltung" in page_response.get_data(as_text=True)
+
+    create_response = test_client.post(
+        "/admin/web/products",
+        data={"action": "create", "name": "Web Mate", "price": "2,30", "active": "on"},
+    )
+    assert create_response.status_code == 302
+    assert create_response.headers["Location"].endswith("/admin/web/products")
+
+    store = app_module.get_product_store()
+    product = next(product for product in store.list_products() if product.name == "Web Mate")
+    product_id = product.id
+    assert product.price_cents == 230
+    assert product.active is True
+
+    update_response = test_client.post(
+        "/admin/web/products",
+        data={
+            "action": "update",
+            "product_id": str(product_id),
+            "name": "Web Mate Gross",
+            "price": "2.50",
+        },
+    )
+    assert update_response.status_code == 302
+
+    updated = next(product for product in store.list_products() if product.id == product_id)
+    assert updated.name == "Web Mate Gross"
+    assert updated.price_cents == 250
+    assert updated.active is False

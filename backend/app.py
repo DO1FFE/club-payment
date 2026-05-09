@@ -1,5 +1,7 @@
 import logging
 import os
+import secrets
+from decimal import Decimal, InvalidOperation
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -15,11 +17,16 @@ from users import Role, get_user_store
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
+if not FLASK_SECRET_KEY:
+    logger.warning("FLASK_SECRET_KEY is not set; using an ephemeral development secret.")
+    FLASK_SECRET_KEY = secrets.token_hex(32)
+app.secret_key = FLASK_SECRET_KEY
 
 # Stripe configuration
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
@@ -48,9 +55,60 @@ def _get_admin_user_from_session():
     return user
 
 
+def _format_price_euros(price_cents: int) -> str:
+    return f"{price_cents / 100:.2f}".replace(".", ",")
+
+
+def _parse_price_cents_from_form(value: str | None) -> int:
+    if not isinstance(value, str) or not value.strip():
+        raise APIError("preis ist erforderlich", 400)
+    try:
+        euros = Decimal(value.strip().replace(",", "."))
+    except InvalidOperation:
+        raise APIError("preis muss eine Zahl sein", 400)
+    cents = euros * 100
+    if cents != cents.to_integral_value():
+        raise APIError("preis darf hoechstens zwei Nachkommastellen haben", 400)
+    return validate_amount_cents(int(cents))
+
+
+def _render_admin_users(admin_user, error_message: str | None = None):
+    store = get_user_store()
+    users = list(store.list_users())
+    registry = get_device_registry()
+    assignments = {assignment.user_id: assignment.device_id for assignment in registry.list_devices()}
+    devices = []
+    for assignment in registry.list_devices():
+        user = store.get_by_id(assignment.user_id)
+        devices.append({
+            "device_id": assignment.device_id,
+            "user": user,
+        })
+    return render_template(
+        "admin_users.html",
+        admin_name=admin_user.name,
+        users=users,
+        assignments=assignments,
+        devices=devices,
+        error_message=error_message,
+    )
+
+
+def _render_admin_products(admin_user, error_message: str | None = None):
+    store = get_product_store()
+    return render_template(
+        "admin_products.html",
+        admin_name=admin_user.name,
+        products=list(store.list_products()),
+        format_price_euros=_format_price_euros,
+        error_message=error_message,
+    )
+
+
 @app.route("/terminal/connection_token", methods=["POST"])
 @handle_errors
 def create_connection_token():
+    authenticate_request(request)
     token = stripe.terminal.ConnectionToken.create()
     return jsonify({"secret": token.secret})
 
@@ -281,6 +339,13 @@ def admin_web_logout():
     return redirect(url_for("admin_web_login"))
 
 
+@app.route("/admin/web")
+def admin_web_index():
+    if not _get_admin_user_from_session():
+        return redirect(url_for("admin_web_login"))
+    return redirect(url_for("admin_web_users"))
+
+
 @app.route("/admin/web/users", methods=["GET", "POST"])
 def admin_web_users():
     admin_user = _get_admin_user_from_session()
@@ -322,17 +387,80 @@ def admin_web_users():
                     registry.assign_device(device_id=device_id.strip(), user_id=created_user.id)
                 return redirect(url_for("admin_web_users"))
 
-    store = get_user_store()
-    users = list(store.list_users())
-    registry = get_device_registry()
-    assignments = {assignment.user_id: assignment.device_id for assignment in registry.list_devices()}
-    return render_template(
-        "admin_users.html",
-        admin_name=admin_user.name,
-        users=users,
-        assignments=assignments,
-        error_message=error_message,
-    )
+    return _render_admin_users(admin_user, error_message=error_message)
+
+
+@app.route("/admin/web/devices", methods=["POST"])
+def admin_web_devices():
+    admin_user = _get_admin_user_from_session()
+    if not admin_user:
+        return redirect(url_for("admin_web_login"))
+
+    device_id = request.form.get("device_id")
+    user_id = request.form.get("user_id")
+    error_message = None
+
+    if not isinstance(device_id, str) or not device_id.strip():
+        error_message = "device_id ist erforderlich"
+    else:
+        try:
+            user_id_value = int(user_id)
+        except (TypeError, ValueError):
+            error_message = "user_id muss eine ganze Zahl sein"
+        else:
+            store = get_user_store()
+            user = store.get_by_id(user_id_value)
+            if not user:
+                error_message = "User nicht gefunden"
+            else:
+                registry = get_device_registry()
+                registry.assign_device(device_id=device_id.strip(), user_id=user.id)
+                return redirect(url_for("admin_web_users"))
+
+    return _render_admin_users(admin_user, error_message=error_message)
+
+
+@app.route("/admin/web/products", methods=["GET", "POST"])
+def admin_web_products():
+    admin_user = _get_admin_user_from_session()
+    if not admin_user:
+        return redirect(url_for("admin_web_login"))
+
+    error_message = None
+    if request.method == "POST":
+        action = request.form.get("action", "create")
+        name = request.form.get("name")
+        price = request.form.get("price")
+        active = request.form.get("active") == "on"
+        store = get_product_store()
+
+        try:
+            if not isinstance(name, str) or not name.strip():
+                raise APIError("name ist erforderlich", 400)
+            price_cents = _parse_price_cents_from_form(price)
+
+            if action == "create":
+                store.create_product(name=name.strip(), price_cents=price_cents, active=active)
+            elif action == "update":
+                try:
+                    product_id = int(request.form.get("product_id"))
+                except (TypeError, ValueError):
+                    raise APIError("product_id muss eine ganze Zahl sein", 400)
+                product = store.update_product(
+                    product_id=product_id,
+                    name=name.strip(),
+                    price_cents=price_cents,
+                    active=active,
+                )
+                if not product:
+                    raise APIError("Produkt nicht gefunden", 404)
+            else:
+                raise APIError("Unbekannte Aktion", 400)
+            return redirect(url_for("admin_web_products"))
+        except APIError as err:
+            error_message = str(err)
+
+    return _render_admin_products(admin_user, error_message=error_message)
 
 
 @app.route("/admin/users", methods=["GET"])

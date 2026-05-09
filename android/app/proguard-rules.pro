@@ -1,4 +1,16 @@
 # Keep Stripe Terminal models
 -keep class com.stripe.stripeterminal.** { *; }
+-keep class com.darc.ovl11.clubpayment.ConnectionTokenResponse { *; }
+-keep class com.darc.ovl11.clubpayment.LoginRequest { *; }
+-keep class com.darc.ovl11.clubpayment.LoginResponse { *; }
+-keep class com.darc.ovl11.clubpayment.PaymentIntentRequest { *; }
+-keep class com.darc.ovl11.clubpayment.PaymentIntentResponse { *; }
+-keep class com.darc.ovl11.clubpayment.ReceiptResponse { *; }
+-keep class com.darc.ovl11.clubpayment.ProductDto { *; }
+-keep class com.darc.ovl11.clubpayment.ProductListResponse { *; }
+-keep class com.darc.ovl11.clubpayment.CreateProductRequest { *; }
+-keep class com.darc.ovl11.clubpayment.UpdateProductRequest { *; }
 -dontwarn okhttp3.**
 -dontwarn okio.**
+-dontwarn org.slf4j.impl.StaticLoggerBinder
+-dontwarn org.slf4j.impl.StaticMDCBinder

@@ -55,17 +55,11 @@ jobs:
         env:
           BACKEND_BASE_URL: https://example.com
 
-      - name: Gradle-Distribution bereitstellen
-        run: |
-          curl -sSL -o /tmp/gradle-8.7-bin.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          rm -rf /tmp/gradle-8.7
-          unzip -q /tmp/gradle-8.7-bin.zip -d /tmp
-
       - name: Debug-APK bauen
         run: |
           export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
-          /tmp/gradle-8.7/bin/gradle -p android :app:assembleDebug --stacktrace --info --no-daemon
+          ./android/gradlew -p android :app:assembleDebug --stacktrace --info --no-daemon
 
       - name: Debug-APK hochladen
         uses: actions/upload-artifact@v4

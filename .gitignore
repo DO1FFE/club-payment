@@ -10,7 +10,6 @@ android/.gradle
 android/local.properties
 android/app/build/
 android/build/
-android/gradle/wrapper/gradle-wrapper.jar
 *.keystore
 
 # OS

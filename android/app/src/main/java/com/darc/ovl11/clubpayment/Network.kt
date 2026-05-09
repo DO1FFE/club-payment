@@ -7,8 +7,10 @@ import kotlinx.serialization.Serializable
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.logging.HttpLoggingInterceptor
+import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
+import retrofit2.HttpException
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.PATCH
@@ -80,6 +82,15 @@ data class UpdateProductRequest(
     val active: Boolean? = null,
 )
 
+fun Throwable.backendErrorMessage(defaultMessage: String): String {
+    val httpException = this as? HttpException
+    val errorBody = httpException?.response()?.errorBody()?.string()
+    val backendMessage = errorBody
+        ?.let { body -> runCatching { JSONObject(body).optString("error") }.getOrNull() }
+        ?.takeIf { it.isNotBlank() }
+    return backendMessage ?: message ?: defaultMessage
+}
+
 interface BackendService {
     @POST("/terminal/connection_token")
     suspend fun createConnectionToken(): ConnectionTokenResponse
@@ -118,7 +129,11 @@ class AuthInterceptor(private val authStore: AuthStore) : okhttp3.Interceptor {
 
 fun provideBackendService(baseUrl: String, authStore: AuthStore): BackendService {
     val logging = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
+        level = if (BuildConfig.DEBUG) {
+            HttpLoggingInterceptor.Level.BASIC
+        } else {
+            HttpLoggingInterceptor.Level.NONE
+        }
     }
     val client = OkHttpClient.Builder()
         .addInterceptor(AuthInterceptor(authStore))
