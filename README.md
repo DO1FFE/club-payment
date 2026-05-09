@@ -27,14 +27,14 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env  # STRIPE_SECRET_KEY usw. eintragen
-python app.py  # läuft auf Port 5000
+python app.py  # läuft auf Port 4040
 ```
 
 ## Android-App konfigurieren
 1. `android/gradle.properties` enthält Platzhalter:
-   - `BACKEND_BASE_URL=https://example.com`
+   - `BACKEND_BASE_URL=http://payment.lima11.de/`
    - `LOCATION_ID=` (fuer echte Stripe Tap-to-Pay-Zahlungen erforderlich)
-2. Für lokale Emulator-Tests: setze `BACKEND_BASE_URL=http://10.0.2.2:5000`.
+2. Für lokale Emulator-Tests gegen einen direkt gestarteten Backend-Prozess kannst du temporär `BACKEND_BASE_URL=http://10.0.2.2:4040/` in `android/local.properties` setzen.
 3. Alternativ kannst du in `android/local.properties` dieselben Keys setzen, sie überschreiben `gradle.properties`.
 4. Keine Secret Keys in der App; die App holt Connection Token & PaymentIntents ausschließlich vom Backend.
 
@@ -67,7 +67,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit
-- Network Security Config erlaubt Klartext nur für `10.0.2.2/localhost` (Emulator); produktiv HTTPS nutzen.
+- Network Security Config erlaubt Klartext für `payment.lima11.de` sowie `10.0.2.2/localhost` für lokale Emulator-Tests; produktiv HTTPS nutzen, sobald der Proxy TLS bereitstellt.
 - R8/ProGuard ist für Release aktiviert; Stripe Terminal-Klassen werden per Rule erhalten.
 - Tap to Pay Flow ist nativ über das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present).
 - Auth-Persistenz-Entscheidung (Android): **Token-only für „Angemeldet bleiben“**. Es werden keine Passwörter gespeichert. Optional kann nur der Benutzername für die Login-Vorbelegung gespeichert werden.

@@ -25,12 +25,12 @@ Environment variables used:
 - `FLASK_SECRET_KEY` – required for stable admin web sessions in non-development deployments
 - `ADMIN_API_TOKEN`, `ADMIN_NAME`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` – optional initial admin bootstrap
 - `ALLOWED_ORIGINS` – comma-separated CORS origins (use `*` to allow all during development)
-- `PORT` – port to bind (default 5000)
+- `PORT` – port to bind (default 4040)
 
 ## Run locally
 
 ```bash
-flask --app app run --host 0.0.0.0 --port 5000 --debug
+flask --app app run --host 0.0.0.0 --port 4040 --debug
 ```
 
 or simply:
