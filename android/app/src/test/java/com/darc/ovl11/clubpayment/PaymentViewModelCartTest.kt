@@ -23,6 +23,16 @@ class PaymentViewModelCartTest {
     }
 
     @Test
+    fun `calculateCartTotalAmountCents addiert freie betraege`() {
+        val selectedItems = mapOf(cola.id to 1)
+        val customItems = listOf(CustomCartItem(id = 1, description = "Spende", amountCents = 500))
+
+        val total = calculateCartTotalAmountCents(listOf(cola), selectedItems, customItems)
+
+        assertEquals(750, total)
+    }
+
+    @Test
     fun `createItemLabel erstellt komprimierte artikelliste`() {
         val selectedItems = mapOf(
             wasser.id to 3,
@@ -32,6 +42,27 @@ class PaymentViewModelCartTest {
         val label = createItemLabel(listOf(cola, wasser), selectedItems)
 
         assertEquals("1× Cola, 3× Wasser", label)
+    }
+
+    @Test
+    fun `createCartItemLabel enthaelt freie betraege mit beschreibung`() {
+        val label = createCartItemLabel(
+            products = listOf(cola),
+            selectedItems = mapOf(cola.id to 1),
+            customItems = listOf(CustomCartItem(id = 1, description = "Gastbeitrag", amountCents = 375)),
+        )
+
+        assertTrue(label.contains("Cola"))
+        assertTrue(label.contains("Gastbeitrag"))
+        assertTrue(label.contains("3,75"))
+    }
+
+    @Test
+    fun `parseEuroAmountToCents akzeptiert komma und lehnt ungueltige werte ab`() {
+        assertEquals(250, parseEuroAmountToCents("2,50"))
+        assertEquals(200, parseEuroAmountToCents("2"))
+        assertEquals(null, parseEuroAmountToCents("0"))
+        assertEquals(null, parseEuroAmountToCents("1,234"))
     }
 
     @Test

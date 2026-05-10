@@ -58,6 +58,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,6 +73,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -84,6 +86,12 @@ private val ClubInk = Color(0xFF16211D)
 private val ClubMuted = Color(0xFF60716A)
 private val ClubBorder = Color(0xFFD9E1DC)
 private val ClubDanger = Color(0xFFB42318)
+
+data class CustomCartItem(
+    val id: Int,
+    val description: String,
+    val amountCents: Int,
+)
 
 class MainActivity : ComponentActivity() {
     private val authStore by lazy { AuthStore(applicationContext) }
@@ -132,12 +140,16 @@ class PaymentViewModel(
     private val _selectedItems = MutableStateFlow<Map<Int, Int>>(emptyMap())
     val selectedItems: StateFlow<Map<Int, Int>> = _selectedItems
 
-    val totalAmountCents: StateFlow<Int> = combine(_products, _selectedItems) { products, selectedItems ->
-        calculateTotalAmountCents(products, selectedItems)
+    private val _customItems = MutableStateFlow<List<CustomCartItem>>(emptyList())
+    val customItems: StateFlow<List<CustomCartItem>> = _customItems
+    private var nextCustomItemId = 1
+
+    val totalAmountCents: StateFlow<Int> = combine(_products, _selectedItems, _customItems) { products, selectedItems, customItems ->
+        calculateCartTotalAmountCents(products, selectedItems, customItems)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
-    val itemLabel: StateFlow<String> = combine(_products, _selectedItems) { products, selectedItems ->
-        createItemLabel(products, selectedItems)
+    val itemLabel: StateFlow<String> = combine(_products, _selectedItems, _customItems) { products, selectedItems, customItems ->
+        createCartItemLabel(products, selectedItems, customItems)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     private val _productsLoading = MutableStateFlow(false)
@@ -183,6 +195,24 @@ class PaymentViewModel(
 
     fun clearCart() {
         _selectedItems.value = emptyMap()
+        _customItems.value = emptyList()
+    }
+
+    fun addCustomAmount(description: String, amountCents: Int) {
+        val normalizedDescription = description.trim()
+        if (normalizedDescription.isBlank() || amountCents <= 0) {
+            return
+        }
+        val item = CustomCartItem(
+            id = nextCustomItemId++,
+            description = normalizedDescription,
+            amountCents = amountCents,
+        )
+        _customItems.value = _customItems.value + item
+    }
+
+    fun removeCustomAmount(item: CustomCartItem) {
+        _customItems.value = _customItems.value.filterNot { it.id == item.id }
     }
 
     fun startPayment(amountCents: Int, itemLabel: String) {
@@ -376,7 +406,7 @@ fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
                         text = "Geräte-ID: $deviceName"
                     )
                     Button(
-                        onClick = { authViewModel.login(userName.trim(), password, rememberCredentials) },
+                        onClick = { authViewModel.login(userName.trim(), password, rememberCredentials, deviceName) },
                         enabled = userName.isNotBlank() && password.isNotBlank() && loginStatus !is LoginStatus.Loading,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = ClubGreen),
@@ -403,6 +433,7 @@ fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
                     }
                 }
             }
+            CopyrightFooter()
         }
     }
 }
@@ -414,6 +445,7 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
     val productsLoading by viewModel.productsLoading.collectAsState()
     val productsError by viewModel.productsError.collectAsState()
     val selectedItems by viewModel.selectedItems.collectAsState()
+    val customItems by viewModel.customItems.collectAsState()
     val totalAmountCents by viewModel.totalAmountCents.collectAsState()
     val itemLabel by viewModel.itemLabel.collectAsState()
 
@@ -440,12 +472,20 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
             onAddProduct = { viewModel.addProduct(it) }
         )
 
+        CustomAmountCard(
+            onAddCustomAmount = { description, amountCents ->
+                viewModel.addCustomAmount(description, amountCents)
+            }
+        )
+
         CartCard(
             products = products,
             selectedItems = selectedItems,
+            customItems = customItems,
             totalAmountCents = totalAmountCents,
             onAddProduct = { viewModel.addProduct(it) },
             onRemoveProduct = { viewModel.removeProduct(it) },
+            onRemoveCustomAmount = { viewModel.removeCustomAmount(it) },
             onClearCart = { viewModel.clearCart() }
         )
 
@@ -473,6 +513,8 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
         if (success?.receiptUrl != null) {
             ReceiptQrCard(success.receiptUrl)
         }
+
+        CopyrightFooter()
     }
 }
 
@@ -550,11 +592,19 @@ fun PaymentHeader(userName: String, deviceName: String, onLogout: () -> Unit) {
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "Angemeldet als $userName",
+                            text = "Angemeldet als",
                             color = Color.White.copy(alpha = 0.86f),
                             style = MaterialTheme.typography.bodyMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = userName,
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Clip
                         )
                     }
                 }
@@ -656,12 +706,86 @@ fun ProductSection(
 }
 
 @Composable
+fun CustomAmountCard(
+    onAddCustomAmount: (description: String, amountCents: Int) -> Unit,
+) {
+    var description by remember { mutableStateOf("") }
+    var amountText by remember { mutableStateOf("") }
+    val parsedAmount = parseEuroAmountToCents(amountText)
+    val canAdd = description.isNotBlank() && parsedAmount != null
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = ClubSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SectionTitle(
+                icon = R.drawable.ic_receipt,
+                title = "Freier Betrag",
+                trailing = "einmalig"
+            )
+            OutlinedTextField(
+                value = description,
+                onValueChange = { description = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Kurzbeschreibung") },
+                singleLine = true,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top
+            ) {
+                OutlinedTextField(
+                    value = amountText,
+                    onValueChange = { amountText = it },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Betrag") },
+                    placeholder = { Text("2,50") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    supportingText = {
+                        Text(if (amountText.isBlank() || parsedAmount != null) "Euro" else "Bitte gueltigen Betrag eingeben")
+                    }
+                )
+                Button(
+                    onClick = {
+                        val amountCents = parseEuroAmountToCents(amountText) ?: return@Button
+                        onAddCustomAmount(description, amountCents)
+                        description = ""
+                        amountText = ""
+                    },
+                    enabled = canAdd,
+                    modifier = Modifier.heightIn(min = 56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = ClubGreen)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_add),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Hinzufuegen")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun CartCard(
     products: List<ProductDto>,
     selectedItems: Map<Int, Int>,
+    customItems: List<CustomCartItem>,
     totalAmountCents: Int,
     onAddProduct: (ProductDto) -> Unit,
     onRemoveProduct: (ProductDto) -> Unit,
+    onRemoveCustomAmount: (CustomCartItem) -> Unit,
     onClearCart: () -> Unit,
 ) {
     Card(
@@ -679,7 +803,7 @@ fun CartCard(
                 title = "Warenkorb",
                 trailing = formatCurrency(totalAmountCents)
             )
-            if (selectedItems.isEmpty()) {
+            if (selectedItems.isEmpty() && customItems.isEmpty()) {
                 Text(
                     text = "Noch keine Produkte ausgewählt.",
                     color = ClubMuted,
@@ -696,6 +820,18 @@ fun CartCard(
                         onRemoveProduct = onRemoveProduct
                     )
                     if (index < selectedProducts.size - 1) {
+                        HorizontalDivider(color = ClubBorder)
+                    }
+                }
+                if (selectedProducts.isNotEmpty() && customItems.isNotEmpty()) {
+                    HorizontalDivider(color = ClubBorder)
+                }
+                customItems.forEachIndexed { index, item ->
+                    CustomCartItemRow(
+                        item = item,
+                        onRemoveCustomAmount = onRemoveCustomAmount
+                    )
+                    if (index < customItems.size - 1) {
                         HorizontalDivider(color = ClubBorder)
                     }
                 }
@@ -772,6 +908,50 @@ fun CartItemRow(
             Icon(
                 painter = painterResource(R.drawable.ic_add),
                 contentDescription = "${product.name} hinzufügen"
+            )
+        }
+    }
+}
+
+@Composable
+fun CustomCartItemRow(
+    item: CustomCartItem,
+    onRemoveCustomAmount: (CustomCartItem) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = item.description,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "Freier Betrag",
+                color = ClubMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Text(
+            text = formatCurrency(item.amountCents),
+            color = ClubGreen,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        IconButton(
+            onClick = { onRemoveCustomAmount(item) },
+            modifier = Modifier.size(42.dp)
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_remove),
+                contentDescription = "${item.description} entfernen"
             )
         }
     }
@@ -922,6 +1102,19 @@ fun ReceiptQrCard(receiptUrl: String) {
             }
         }
     }
+}
+
+@Composable
+fun CopyrightFooter(modifier: Modifier = Modifier) {
+    Text(
+        text = "Version ${BuildConfig.VERSION_NAME} - Copyright Erik Schauer, do1ffe@darc.de",
+        color = ClubMuted,
+        style = MaterialTheme.typography.bodySmall,
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+    )
 }
 
 @Composable
@@ -1137,6 +1330,14 @@ fun calculateTotalAmountCents(products: List<ProductDto>, selectedItems: Map<Int
     }
 }
 
+fun calculateCartTotalAmountCents(
+    products: List<ProductDto>,
+    selectedItems: Map<Int, Int>,
+    customItems: List<CustomCartItem>,
+): Int {
+    return calculateTotalAmountCents(products, selectedItems) + customItems.sumOf { it.amountCents }
+}
+
 fun createItemLabel(products: List<ProductDto>, selectedItems: Map<Int, Int>): String {
     val productById = products.associateBy { it.id }
     return selectedItems.entries
@@ -1146,6 +1347,37 @@ fun createItemLabel(products: List<ProductDto>, selectedItems: Map<Int, Int>): S
             "$quantity× ${product.name}"
         }
         .joinToString(", ")
+}
+
+fun createCartItemLabel(
+    products: List<ProductDto>,
+    selectedItems: Map<Int, Int>,
+    customItems: List<CustomCartItem>,
+): String {
+    val productLabel = createItemLabel(products, selectedItems)
+    val customLabel = customItems.joinToString(", ") { item ->
+        "${item.description} (${formatCurrency(item.amountCents)})"
+    }
+    return listOf(productLabel, customLabel)
+        .filter { it.isNotBlank() }
+        .joinToString(", ")
+}
+
+fun parseEuroAmountToCents(value: String): Int? {
+    val normalized = value.trim().replace(",", ".")
+    if (normalized.isBlank()) {
+        return null
+    }
+    return try {
+        val cents = BigDecimal(normalized).multiply(BigDecimal(100))
+        if (cents.stripTrailingZeros().scale() > 0) {
+            null
+        } else {
+            cents.intValueExact().takeIf { it > 0 }
+        }
+    } catch (error: Exception) {
+        null
+    }
 }
 
 fun isPayButtonEnabled(totalAmountCents: Int, status: PaymentStatus): Boolean {

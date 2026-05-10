@@ -34,11 +34,11 @@ class AuthViewModelTest {
         val backendService = mock<BackendService>()
         whenever(authStore.authData).thenReturn(MutableStateFlow(null))
         whenever(authStore.rememberedCredentials).thenReturn(MutableStateFlow(null))
-        whenever(backendService.login(LoginRequest("max", "geheim")))
+        whenever(backendService.login(LoginRequest("max", "geheim", "geraet-1")))
             .thenReturn(LoginResponse(token = "token-xyz", displayName = "Max"))
         val viewModel = AuthViewModel(authStore, backendService)
 
-        viewModel.login(userName = "max", password = "geheim", rememberCredentials = true)
+        viewModel.login(userName = "max", password = "geheim", rememberCredentials = true, deviceId = "geraet-1")
         advanceUntilIdle()
 
         verify(authStore).saveAuth("token-xyz", "Max")

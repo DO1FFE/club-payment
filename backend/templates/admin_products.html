@@ -54,7 +54,6 @@
           {% for product in products %}
           <form class="product-row" method="post" action="{{ url_for('admin_web_products') }}">
             <input type="hidden" name="product_id" value="{{ product.id }}">
-            <input type="hidden" name="action" value="update">
             <span class="muted">#{{ product.id }}</span>
             <input name="name" type="text" value="{{ product.name }}" required>
             <input name="price" type="text" inputmode="decimal" value="{{ format_price_euros(product.price_cents) }}" required>
@@ -62,11 +61,13 @@
               <input name="active" type="checkbox" {% if product.active %}checked{% endif %}>
               Aktiv
             </label>
-            <button class="secondary" type="submit">Speichern</button>
+            <button class="secondary" type="submit" name="action" value="update">Speichern</button>
+            <button class="danger" type="submit" name="action" value="delete" formnovalidate>L&ouml;schen</button>
           </form>
           {% endfor %}
         </div>
       </section>
     </main>
+    <footer class="copyright">Copyright Erik Schauer, do1ffe@darc.de</footer>
   </body>
 </html>

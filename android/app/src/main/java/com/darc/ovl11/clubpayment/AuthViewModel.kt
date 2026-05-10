@@ -28,11 +28,13 @@ class AuthViewModel(
     private val _loginStatus = MutableStateFlow<LoginStatus>(LoginStatus.Idle)
     val loginStatus: StateFlow<LoginStatus> = _loginStatus.asStateFlow()
 
-    fun login(userName: String, password: String, rememberCredentials: Boolean) {
+    fun login(userName: String, password: String, rememberCredentials: Boolean, deviceId: String? = null) {
         viewModelScope.launch {
             _loginStatus.value = LoginStatus.Loading
             try {
-                val response = backendService.login(LoginRequest(username = userName, password = password))
+                val response = backendService.login(
+                    LoginRequest(username = userName, password = password, device_id = deviceId)
+                )
                 authStore.saveAuth(response.token, response.displayName)
                 if (rememberCredentials) {
                     authStore.saveRememberedCredentials(userName, password)

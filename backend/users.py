@@ -108,6 +108,8 @@ class UserStore:
         name: Optional[str] = None,
         role: Optional[Role] = None,
         active: Optional[bool] = None,
+        username: Optional[str] = None,
+        password_hash: Optional[str] = None,
     ) -> Optional[User]:
         with SessionLocal() as session:
             record = session.get(UserRecord, user_id)
@@ -115,13 +117,26 @@ class UserStore:
                 return None
             if name is not None:
                 record.name = name
+            if username is not None:
+                record.username = username
             if role is not None:
                 record.role = role.value
             if active is not None:
                 record.active = active
+            if password_hash is not None:
+                record.password_hash = password_hash
             session.commit()
             session.refresh(record)
             return self._to_user(record)
+
+    def delete_user(self, user_id: int) -> bool:
+        with SessionLocal() as session:
+            record = session.get(UserRecord, user_id)
+            if not record:
+                return False
+            session.delete(record)
+            session.commit()
+            return True
 
 
 _STORE: Optional[UserStore] = None

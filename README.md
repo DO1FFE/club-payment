@@ -2,6 +2,8 @@
 
 Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für eine einfache Getränke-Kasse.
 
+Copyright Erik Schauer, do1ffe@darc.de
+
 ## Voraussetzungen
 
 ### Allgemein
@@ -40,6 +42,8 @@ python app.py  # läuft auf Port 4040
 
 5. Die App zeigt ihre Geraete-ID im Login- und Zahlungsbildschirm an; diese ID muss im Admin-Web einem Nutzer zugewiesen werden.
 6. Die Zahlung laeuft ueber das NFC-Modul des Android-Handys mit Stripe Tap to Pay. Es wird kein externes Terminal oder Kartenlesegeraet verbunden. Ohne `LOCATION_ID` bricht der echte NFC-Zahlungsfluss mit einer klaren Fehlermeldung ab.
+7. Beim ersten Login meldet die App ihre Geraete-ID an das Backend; im Admin-Web kann diese ID einem Nutzer zugeordnet werden.
+8. Neben Produkten kann in der App ein freier Einmalbetrag mit Kurzbeschreibung in den Warenkorb gelegt und bezahlt werden.
 
 ## APK bauen
 ```bash
@@ -47,6 +51,8 @@ cd android
 ./gradlew :app:assembleDebug      # Debug APK
 ./gradlew :app:assembleRelease    # Release (unsigned, falls keine Signatur konfiguriert)
 ```
+Vor jedem signierten APK-Build `versionCode` und `versionName` in `android/app/build.gradle.kts` erhoehen.
+
 Falls der Checkout in einem OneDrive-Ordner liegt und Gradle über ReparsePoint-/Dateisperren stolpert, kannst du Build-Artefakte lokal auslagern:
 ```bash
 ./gradlew :app:assembleDebug -PCLUB_PAYMENT_BUILD_DIR="$LOCALAPPDATA/CodexTools/club-payment-gradle-build"
@@ -64,6 +70,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 ### Artefakte
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Release APK: `android/app/build/outputs/apk/release/app-release.apk`
+- Signierte PR-APK: `artifacts/club-payment-1.0.1-release-signed.apk`
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit
