@@ -22,6 +22,11 @@ import kotlinx.coroutines.runBlocking
 data class ConnectionTokenResponse(val secret: String)
 
 @Serializable
+data class TerminalConfigResponse(
+    val location_id: String,
+)
+
+@Serializable
 data class LoginRequest(
     val username: String,
     val password: String,
@@ -95,6 +100,9 @@ fun Throwable.backendErrorMessage(defaultMessage: String): String {
 interface BackendService {
     @POST("/terminal/connection_token")
     suspend fun createConnectionToken(): ConnectionTokenResponse
+
+    @GET("/terminal/config")
+    suspend fun getTerminalConfig(): TerminalConfigResponse
 
     @POST("/auth/login")
     suspend fun login(@Body request: LoginRequest): LoginResponse

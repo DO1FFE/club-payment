@@ -59,6 +59,8 @@ sealed class PaymentStatus {
 }
 
 class TerminalManager(private val context: Context, private val backendService: BackendService) {
+    private var cachedLocationId: String? = null
+
     private fun ensureInitialized() {
         if (!Terminal.isInitialized()) {
             Terminal.initTerminal(
@@ -171,28 +173,38 @@ class TerminalManager(private val context: Context, private val backendService: 
         cont.invokeOnCancellation { cancelable?.cancel(NoopCallback) }
     }
 
-    private suspend fun connectPhoneTapToPay(reader: Reader): Reader = suspendCancellableCoroutine { cont ->
+    private suspend fun connectPhoneTapToPay(reader: Reader): Reader {
         ensureInitialized()
-        val locationId = BuildConfig.LOCATION_ID.trim()
+        val locationId = resolveTerminalLocationId()
         if (locationId.isBlank()) {
-            cont.resumeWithException(
-                IllegalStateException("LOCATION_ID fehlt; fuer Tap to Pay mit dem Handy muss eine Stripe-Location-ID konfiguriert sein")
-            )
-            return@suspendCancellableCoroutine
+            throw IllegalStateException("Stripe-Location-ID fehlt; bitte im Server eine Terminal-Location konfigurieren")
         }
-        Terminal.getInstance().connectLocalMobileReader(
-            reader,
-            ConnectionConfiguration.LocalMobileConnectionConfiguration(locationId),
-            object : ReaderCallback {
-                override fun onSuccess(reader: Reader) {
-                    cont.resume(reader)
-                }
+        return suspendCancellableCoroutine { cont ->
+            Terminal.getInstance().connectLocalMobileReader(
+                reader,
+                ConnectionConfiguration.LocalMobileConnectionConfiguration(locationId),
+                object : ReaderCallback {
+                    override fun onSuccess(reader: Reader) {
+                        cont.resume(reader)
+                    }
 
-                override fun onFailure(e: TerminalException) {
-                    cont.resumeWithException(e)
+                    override fun onFailure(e: TerminalException) {
+                        cont.resumeWithException(e)
+                    }
                 }
-            }
-        )
+            )
+        }
+    }
+
+    private suspend fun resolveTerminalLocationId(): String {
+        val buildLocationId = BuildConfig.LOCATION_ID.trim()
+        if (buildLocationId.isNotBlank()) {
+            return buildLocationId
+        }
+        cachedLocationId?.takeIf { it.isNotBlank() }?.let { return it }
+        val serverLocationId = backendService.getTerminalConfig().location_id.trim()
+        cachedLocationId = serverLocationId
+        return serverLocationId
     }
 
     fun readableDeviceName(): String {

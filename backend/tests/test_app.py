@@ -70,6 +70,74 @@ def test_connection_token_requires_auth(client):
     assert response.get_json()["error"] == "Authorization-Header fehlt"
 
 
+def test_terminal_config_uses_configured_location(client, monkeypatch):
+    test_client, app_module = client
+    monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "tml_configured")
+
+    response = test_client.get(
+        "/terminal/config",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"location_id": "tml_configured"}
+
+
+def test_terminal_config_uses_existing_stripe_location(client, monkeypatch):
+    test_client, app_module = client
+    monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "")
+
+    class DummyLocation:
+        id = "tml_existing"
+
+    class DummyLocations:
+        data = [DummyLocation()]
+
+    def fake_list(limit):
+        assert limit == 1
+        return DummyLocations()
+
+    monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
+
+    response = test_client.get(
+        "/terminal/config",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"location_id": "tml_existing"}
+
+
+def test_terminal_config_creates_test_location_when_missing(client, monkeypatch):
+    test_client, app_module = client
+    monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "")
+
+    class EmptyLocations:
+        data = []
+
+    class DummyLocation:
+        id = "tml_created"
+
+    def fake_list(limit):
+        return EmptyLocations()
+
+    def fake_create(**kwargs):
+        assert kwargs["display_name"] == "DARC OV L11 Club Kasse"
+        assert kwargs["address"]["country"] == "DE"
+        return DummyLocation()
+
+    monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
+    monkeypatch.setattr(app_module.stripe.terminal.Location, "create", staticmethod(fake_create))
+
+    response = test_client.get(
+        "/terminal/config",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"location_id": "tml_created"}
+
+
 def test_create_payment_intent_success(client, monkeypatch):
     test_client, app_module = client
 
@@ -261,6 +329,20 @@ def test_admin_device_flow(client):
     assert list_response.status_code == 200
     devices = list_response.get_json()["devices"]
     assert any(device["device_id"] == "kasse-02" for device in devices)
+
+    delete_response = test_client.delete(
+        "/admin/devices/kasse-02",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.get_json() == {"deleted": True, "device_id": "kasse-02"}
+
+    list_after_delete_response = test_client.get(
+        "/admin/devices",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert list_after_delete_response.status_code == 200
+    assert all(device["device_id"] != "kasse-02" for device in list_after_delete_response.get_json()["devices"])
 
 
 def test_create_user_requires_credentials(client):
@@ -680,6 +762,14 @@ def test_admin_web_assign_device_to_existing_user(client):
     assignment = app_module.get_device_registry().get_device("web-kasse-2")
     assert assignment is not None
     assert assignment.user_id == user.id
+
+    delete_response = test_client.post(
+        "/admin/web/devices",
+        data={"action": "delete", "device_id": "web-kasse-2"},
+    )
+    assert delete_response.status_code == 302
+    assert delete_response.headers["Location"].endswith("/admin/web/users")
+    assert app_module.get_device_registry().get_device("web-kasse-2") is None
 
 
 def test_admin_web_lists_pending_device_after_app_login(client):

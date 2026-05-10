@@ -35,13 +35,13 @@ python app.py  # läuft auf Port 4040
 ## Android-App konfigurieren
 1. `android/gradle.properties` enthält Platzhalter:
    - `BACKEND_BASE_URL=https://payment.lima11.de/`
-   - `LOCATION_ID=` (fuer echte Stripe Tap-to-Pay-Zahlungen erforderlich)
+   - `LOCATION_ID=` (optional; wenn leer, holt die App die Stripe Terminal Location vom Backend)
 2. Für lokale Emulator-Tests gegen einen direkt gestarteten Backend-Prozess kannst du temporär `BACKEND_BASE_URL=http://10.0.2.2:4040/` in `android/local.properties` setzen.
 3. Alternativ kannst du in `android/local.properties` dieselben Keys setzen, sie überschreiben `gradle.properties`.
 4. Keine Secret Keys in der App; die App holt Connection Token & PaymentIntents ausschließlich vom Backend.
 
 5. Die App zeigt ihre Geraete-ID im Login- und Zahlungsbildschirm an; diese ID muss im Admin-Web einem Nutzer zugewiesen werden.
-6. Die Zahlung laeuft ueber das NFC-Modul des Android-Handys mit Stripe Tap to Pay. Es wird kein externes Terminal oder Kartenlesegeraet verbunden. Ohne `LOCATION_ID` bricht der echte NFC-Zahlungsfluss mit einer klaren Fehlermeldung ab.
+6. Die Zahlung laeuft ueber das NFC-Modul des Android-Handys mit Stripe Tap to Pay. Es wird kein externes Terminal oder Kartenlesegeraet verbunden. Die Stripe Terminal Location kommt aus `LOCATION_ID` oder vom Backend-Endpunkt `/terminal/config`.
 7. Beim ersten Login meldet die App ihre Geraete-ID an das Backend; im Admin-Web kann diese ID einem Nutzer zugeordnet werden.
 8. Neben Produkten kann in der App ein freier Einmalbetrag mit Kurzbeschreibung in den Warenkorb gelegt und bezahlt werden.
 
@@ -70,7 +70,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 ### Artefakte
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Release APK: `android/app/build/outputs/apk/release/app-release.apk`
-- Signierte PR-APK: `artifacts/club-payment-1.0.3-release-signed.apk`
+- Signierte PR-APK: `artifacts/club-payment-1.0.4-release-signed.apk`
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit
@@ -80,6 +80,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 - Auth-Persistenz-Entscheidung (Android): Bei aktivierter Option `Zugangsdaten merken` werden Benutzername und Passwort lokal in der App gespeichert und beim naechsten Login vorausgefuellt. Beim Abmelden bleibt diese Vorbelegung erhalten; Login ohne aktivierte Option loescht sie.
 
 ## Backend-API aus der App
+- `GET /terminal/config` → holt mit `Authorization: Bearer <token>` die Stripe Terminal Location fuer Tap to Pay
 - `POST /terminal/connection_token` → holt mit `Authorization: Bearer <token>` ein Connection Token für das Terminal SDK
 - `POST /pos/create_intent` → erzeugt PaymentIntent (EUR, card_present) mit Metadaten (`club`, `item`, `kassierer`, `device`)
 
