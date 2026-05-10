@@ -1,8 +1,13 @@
 package com.darc.ovl11.clubpayment
 
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
@@ -54,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -65,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.core.content.ContextCompat
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,6 +93,7 @@ private val ClubInk = Color(0xFF16211D)
 private val ClubMuted = Color(0xFF60716A)
 private val ClubBorder = Color(0xFFD9E1DC)
 private val ClubDanger = Color(0xFFB42318)
+private const val LocationPermissionMessage = "Standortberechtigung ist fuer Stripe Tap to Pay erforderlich. Bitte erlauben und erneut bezahlen."
 
 data class CustomCartItem(
     val id: Int,
@@ -213,6 +221,10 @@ class PaymentViewModel(
 
     fun removeCustomAmount(item: CustomCartItem) {
         _customItems.value = _customItems.value.filterNot { it.id == item.id }
+    }
+
+    fun showPaymentError(message: String) {
+        _status.value = PaymentStatus.Error(message)
     }
 
     fun startPayment(amountCents: Int, itemLabel: String) {
@@ -440,6 +452,7 @@ fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
 
 @Composable
 fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: String, onLogout: () -> Unit) {
+    val context = LocalContext.current
     val status by viewModel.status.collectAsState()
     val products by viewModel.products.collectAsState()
     val productsLoading by viewModel.productsLoading.collectAsState()
@@ -448,6 +461,18 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
     val customItems by viewModel.customItems.collectAsState()
     val totalAmountCents by viewModel.totalAmountCents.collectAsState()
     val itemLabel by viewModel.itemLabel.collectAsState()
+    var pendingPayment by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val payment = pendingPayment
+        pendingPayment = null
+        if (granted && payment != null) {
+            viewModel.startPayment(payment.first, payment.second)
+        } else {
+            viewModel.showPaymentError(LocationPermissionMessage)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -490,7 +515,14 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
         )
 
         Button(
-            onClick = { viewModel.startPayment(totalAmountCents, itemLabel) },
+            onClick = {
+                if (hasStripeLocationPermission(context)) {
+                    viewModel.startPayment(totalAmountCents, itemLabel)
+                } else {
+                    pendingPayment = totalAmountCents to itemLabel
+                    locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                }
+            },
             enabled = isPayButtonEnabled(totalAmountCents, status),
             modifier = Modifier
                 .fillMaxWidth()
@@ -1387,6 +1419,13 @@ fun isPayButtonEnabled(totalAmountCents: Int, status: PaymentStatus): Boolean {
         status is PaymentStatus.Processing ||
         status is PaymentStatus.FetchingReceipt
     return totalAmountCents > 0 && !paymentInProgress
+}
+
+fun hasStripeLocationPermission(context: Context): Boolean {
+    return ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
 }
 
 fun formatCurrency(amountCents: Int): String {

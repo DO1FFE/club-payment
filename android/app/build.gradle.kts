@@ -16,8 +16,8 @@ android {
         applicationId = "com.darc.ovl11.clubpayment"
         minSdk = 30
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 4
+        versionName = "1.0.3"
 
         val props = gradleLocalProperties(rootDir, providers)
         val backendUrl = props.getProperty("BACKEND_BASE_URL") ?: project.findProperty("BACKEND_BASE_URL")?.toString()
@@ -90,6 +90,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
     implementation("com.stripe:stripeterminal:3.10.1")
+    implementation("com.stripe:stripeterminal-localmobile:3.10.1")
     implementation("com.google.zxing:core:3.5.3")
 
     testImplementation("junit:junit:4.13.2")
