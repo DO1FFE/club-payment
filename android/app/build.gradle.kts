@@ -1,4 +1,6 @@
 import com.android.build.gradle.internal.cxx.configure.gradleLocalProperties
+import java.net.URI
+import java.net.URISyntaxException
 
 plugins {
     id("com.android.application")
@@ -22,6 +24,15 @@ android {
         val locationId = props.getProperty("LOCATION_ID") ?: project.findProperty("LOCATION_ID")?.toString()
         if (backendUrl.isNullOrBlank()) {
             throw GradleException("BACKEND_BASE_URL must be set in local.properties or gradle.properties")
+        }
+        val backendUri = try {
+            URI(backendUrl)
+        } catch (error: URISyntaxException) {
+            throw GradleException("BACKEND_BASE_URL is not a valid URL: $backendUrl", error)
+        }
+        val localCleartextHosts = setOf("10.0.2.2", "localhost", "127.0.0.1")
+        if (backendUri.scheme == "http" && backendUri.host !in localCleartextHosts) {
+            throw GradleException("BACKEND_BASE_URL must use HTTPS for non-local hosts: $backendUrl")
         }
 
         buildConfigField("String", "BACKEND_BASE_URL", "\"$backendUrl\"")

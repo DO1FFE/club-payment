@@ -32,7 +32,7 @@ python app.py  # läuft auf Port 4040
 
 ## Android-App konfigurieren
 1. `android/gradle.properties` enthält Platzhalter:
-   - `BACKEND_BASE_URL=http://payment.lima11.de/`
+   - `BACKEND_BASE_URL=https://payment.lima11.de/`
    - `LOCATION_ID=` (fuer echte Stripe Tap-to-Pay-Zahlungen erforderlich)
 2. Für lokale Emulator-Tests gegen einen direkt gestarteten Backend-Prozess kannst du temporär `BACKEND_BASE_URL=http://10.0.2.2:4040/` in `android/local.properties` setzen.
 3. Alternativ kannst du in `android/local.properties` dieselben Keys setzen, sie überschreiben `gradle.properties`.
@@ -67,7 +67,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit
-- Network Security Config erlaubt Klartext für `payment.lima11.de` sowie `10.0.2.2/localhost` für lokale Emulator-Tests; produktiv HTTPS nutzen, sobald der Proxy TLS bereitstellt.
+- Network Security Config erlaubt Klartext nur für lokale Emulator-Tests über `10.0.2.2/localhost`; die produktive Server-URL nutzt HTTPS.
 - R8/ProGuard ist für Release aktiviert; Stripe Terminal-Klassen werden per Rule erhalten.
 - Tap to Pay Flow ist nativ ueber das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present, NFC direkt am Android-Handy).
 - Auth-Persistenz-Entscheidung (Android): Bei aktivierter Option `Zugangsdaten merken` werden Benutzername und Passwort lokal in der App gespeichert und beim naechsten Login vorausgefuellt. Beim Abmelden bleibt diese Vorbelegung erhalten; Login ohne aktivierte Option loescht sie.
