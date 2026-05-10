@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
@@ -44,6 +44,15 @@ class DeviceAssignmentRecord(Base):
 
     device_id = Column(String(255), primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+
+class PendingDeviceRecord(Base):
+    __tablename__ = "pending_devices"
+
+    device_id = Column(String(255), primary_key=True)
+    user_id = Column(Integer, nullable=True)
+    username = Column(String(255), nullable=True)
+    last_seen_at = Column(DateTime, nullable=False)
 
 
 class ProductRecord(Base):

@@ -44,10 +44,13 @@ class PaymentViewModelStateTest {
         val viewModel = PaymentViewModel(terminalManager, authStore, backendService)
 
         viewModel.addProduct(cola)
+        viewModel.addCustomAmount("Gastbeitrag", 350)
         assertEquals(1, viewModel.selectedItems.value.size)
+        assertEquals(1, viewModel.customItems.value.size)
 
         viewModel.clearCart()
 
         assertEquals(emptyMap<Int, Int>(), viewModel.selectedItems.value)
+        assertEquals(emptyList<CustomCartItem>(), viewModel.customItems.value)
     }
 }

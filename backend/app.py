@@ -63,6 +63,21 @@ def _user_identifier(user) -> str:
     return user.username or user.name
 
 
+def _active_admin_count() -> int:
+    store = get_user_store()
+    return sum(1 for user in store.list_users() if user.active and user.role == Role.ADMIN)
+
+
+def _would_remove_last_active_admin(user, role: Role | None = None, active: bool | None = None) -> bool:
+    next_role = role if role is not None else user.role
+    next_active = active if active is not None else user.active
+    if user.role != Role.ADMIN or not user.active:
+        return False
+    if next_role == Role.ADMIN and next_active:
+        return False
+    return _active_admin_count() <= 1
+
+
 def _parse_price_cents_from_form(value: str | None) -> int:
     if not isinstance(value, str) or not value.strip():
         raise APIError("preis ist erforderlich", 400)
@@ -88,12 +103,14 @@ def _render_admin_users(admin_user, error_message: str | None = None):
             "device_id": assignment.device_id,
             "user": user,
         })
+    pending_devices = list(registry.list_pending_devices())
     return render_template(
         "admin_users.html",
         admin_name=_user_identifier(admin_user),
         users=users,
         assignments=assignments,
         devices=devices,
+        pending_devices=pending_devices,
         user_identifier=_user_identifier,
         error_message=error_message,
     )
@@ -209,7 +226,7 @@ def assign_device():
         raise APIError("User nicht gefunden", 404)
 
     registry = get_device_registry()
-    assignment = registry.assign_device(device_id=device_id, user_id=user.id)
+    assignment = registry.assign_device(device_id=device_id.strip(), user_id=user.id)
     return jsonify({
         "device_id": assignment.device_id,
         "user_id": assignment.user_id,
@@ -236,7 +253,16 @@ def list_devices():
             "role": user.role.value if user else None,
             "active": user.active if user else None,
         })
-    return jsonify({"devices": devices})
+    pending_devices = [
+        {
+            "device_id": pending.device_id,
+            "user_id": pending.user_id,
+            "username": pending.username,
+            "last_seen_at": pending.last_seen_at.isoformat(),
+        }
+        for pending in registry.list_pending_devices()
+    ]
+    return jsonify({"devices": devices, "pending_devices": pending_devices})
 
 
 @app.route("/admin/users", methods=["POST"])
@@ -287,6 +313,7 @@ def login():
     payload = request.get_json(force=True, silent=True) or {}
     username = payload.get("username")
     password = payload.get("password")
+    device_id = payload.get("device_id") or payload.get("device") or payload.get("android_id")
 
     if not isinstance(username, str) or not username.strip():
         raise APIError("username ist erforderlich", 400)
@@ -300,9 +327,20 @@ def login():
     if not user.active:
         raise APIError("Benutzer ist deaktiviert", 403)
 
+    device_pending = False
+    if isinstance(device_id, str) and device_id.strip():
+        registry = get_device_registry()
+        pending_device = registry.remember_pending_device(
+            device_id=device_id.strip(),
+            user_id=user.id,
+            username=_user_identifier(user),
+        )
+        device_pending = pending_device is not None
+
     return jsonify({
         "token": user.api_token,
         "display_name": _user_identifier(user),
+        "device_pending": device_pending,
     })
 
 
@@ -357,31 +395,79 @@ def admin_web_users():
 
     error_message = None
     if request.method == "POST":
+        action = request.form.get("action", "create")
         role_value = request.form.get("role")
         username = request.form.get("username")
         password = request.form.get("password")
         active = request.form.get("active") == "on"
+        store = get_user_store()
 
-        if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
-            error_message = "role muss 'admin' oder 'kassierer' sein"
-        elif not isinstance(username, str) or not username.strip():
-            error_message = "username ist erforderlich"
-        elif not isinstance(password, str) or not password.strip():
-            error_message = "password ist erforderlich"
-        else:
-            store = get_user_store()
+        try:
+            if action == "delete":
+                try:
+                    user_id = int(request.form.get("user_id"))
+                except (TypeError, ValueError):
+                    raise APIError("user_id muss eine ganze Zahl sein", 400)
+                user = store.get_by_id(user_id)
+                if not user:
+                    raise APIError("User nicht gefunden", 404)
+                if user.id == admin_user.id:
+                    raise APIError("Der eigene Admin-Nutzer kann hier nicht geloescht werden", 400)
+                if _would_remove_last_active_admin(user, active=False):
+                    raise APIError("Der letzte aktive Admin kann nicht geloescht werden", 400)
+                registry = get_device_registry()
+                registry.delete_devices_for_user(user.id)
+                store.delete_user(user.id)
+                return redirect(url_for("admin_web_users"))
+
+            if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
+                raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
+            role = Role(role_value)
+            if not isinstance(username, str) or not username.strip():
+                raise APIError("username ist erforderlich", 400)
             normalized_username = username.strip()
-            if store.get_by_username(normalized_username):
-                error_message = "username ist bereits vergeben"
-            else:
+            existing_user = store.get_by_username(normalized_username)
+
+            if action == "create":
+                if not isinstance(password, str) or not password.strip():
+                    raise APIError("password ist erforderlich", 400)
+                if existing_user:
+                    raise APIError("username ist bereits vergeben", 400)
                 store.create_user(
                     name=normalized_username,
-                    role=Role(role_value),
+                    role=role,
                     active=active,
                     username=normalized_username,
                     password_hash=store.hash_password(password),
                 )
                 return redirect(url_for("admin_web_users"))
+
+            if action == "update":
+                try:
+                    user_id = int(request.form.get("user_id"))
+                except (TypeError, ValueError):
+                    raise APIError("user_id muss eine ganze Zahl sein", 400)
+                user = store.get_by_id(user_id)
+                if not user:
+                    raise APIError("User nicht gefunden", 404)
+                if existing_user and existing_user.id != user.id:
+                    raise APIError("username ist bereits vergeben", 400)
+                if _would_remove_last_active_admin(user, role=role, active=active):
+                    raise APIError("Der letzte aktive Admin muss aktiv bleiben", 400)
+                password_hash = store.hash_password(password) if isinstance(password, str) and password.strip() else None
+                store.update_user(
+                    user_id=user.id,
+                    name=normalized_username,
+                    role=role,
+                    active=active,
+                    username=normalized_username,
+                    password_hash=password_hash,
+                )
+                return redirect(url_for("admin_web_users"))
+
+            raise APIError("Unbekannte Aktion", 400)
+        except APIError as err:
+            error_message = str(err)
 
     return _render_admin_users(admin_user, error_message=error_message)
 
@@ -431,9 +517,17 @@ def admin_web_products():
         store = get_product_store()
 
         try:
-            if not isinstance(name, str) or not name.strip():
-                raise APIError("name ist erforderlich", 400)
-            price_cents = _parse_price_cents_from_form(price)
+            if action == "delete":
+                try:
+                    product_id = int(request.form.get("product_id"))
+                except (TypeError, ValueError):
+                    raise APIError("product_id muss eine ganze Zahl sein", 400)
+                if not store.delete_product(product_id):
+                    raise APIError("Produkt nicht gefunden", 404)
+            else:
+                if not isinstance(name, str) or not name.strip():
+                    raise APIError("name ist erforderlich", 400)
+                price_cents = _parse_price_cents_from_form(price)
 
             if action == "create":
                 store.create_product(name=name.strip(), price_cents=price_cents, active=active)
@@ -450,6 +544,8 @@ def admin_web_products():
                 )
                 if not product:
                     raise APIError("Produkt nicht gefunden", 404)
+            elif action == "delete":
+                pass
             else:
                 raise APIError("Unbekannte Aktion", 400)
             return redirect(url_for("admin_web_products"))
@@ -482,7 +578,8 @@ def list_users():
 def update_user(user_id: int):
     authenticate_request(request, require_admin=True)
     payload = request.get_json(force=True, silent=True) or {}
-    name = payload.get("name")
+    username = payload.get("username")
+    password = payload.get("password")
     role_value = payload.get("role")
     active = payload.get("active")
 
@@ -493,18 +590,30 @@ def update_user(user_id: int):
         role = Role(role_value)
     if active is not None and not isinstance(active, bool):
         raise APIError("active muss ein boolescher Wert sein", 400)
-    if name is not None and (not isinstance(name, str) or not name.strip()):
-        raise APIError("name darf nicht leer sein", 400)
+    if username is not None and (not isinstance(username, str) or not username.strip()):
+        raise APIError("username darf nicht leer sein", 400)
+    if password is not None and (not isinstance(password, str) or not password.strip()):
+        raise APIError("password darf nicht leer sein", 400)
 
     store = get_user_store()
+    current_user = store.get_by_id(user_id)
+    if not current_user:
+        raise APIError("User nicht gefunden", 404)
+    normalized_username = username.strip() if isinstance(username, str) else None
+    if normalized_username:
+        existing_user = store.get_by_username(normalized_username)
+        if existing_user and existing_user.id != user_id:
+            raise APIError("username ist bereits vergeben", 400)
+    if _would_remove_last_active_admin(current_user, role=role, active=active):
+        raise APIError("Der letzte aktive Admin muss aktiv bleiben", 400)
     user = store.update_user(
         user_id=user_id,
-        name=name.strip() if isinstance(name, str) else None,
+        name=normalized_username,
         role=role,
         active=active,
+        username=normalized_username,
+        password_hash=store.hash_password(password) if isinstance(password, str) else None,
     )
-    if not user:
-        raise APIError("User nicht gefunden", 404)
     return jsonify({
         "id": user.id,
         "name": _user_identifier(user),
@@ -512,6 +621,25 @@ def update_user(user_id: int):
         "role": user.role.value,
         "active": user.active,
     })
+
+
+@app.route("/admin/users/<int:user_id>", methods=["DELETE"])
+@handle_errors
+def delete_user(user_id: int):
+    admin_user = authenticate_request(request, require_admin=True)
+    store = get_user_store()
+    user = store.get_by_id(user_id)
+    if not user:
+        raise APIError("User nicht gefunden", 404)
+    if user.id == admin_user.id:
+        raise APIError("Der eigene Admin-Nutzer kann nicht geloescht werden", 400)
+    if _would_remove_last_active_admin(user, active=False):
+        raise APIError("Der letzte aktive Admin kann nicht geloescht werden", 400)
+
+    registry = get_device_registry()
+    registry.delete_devices_for_user(user.id)
+    store.delete_user(user.id)
+    return jsonify({"deleted": True, "id": user_id})
 
 
 @app.route("/admin/products", methods=["POST"])
@@ -611,6 +739,16 @@ def update_product(product_id: int):
         "price_cents": product.price_cents,
         "active": product.active,
     })
+
+
+@app.route("/admin/products/<int:product_id>", methods=["DELETE"])
+@handle_errors
+def delete_product(product_id: int):
+    authenticate_request(request, require_admin=True)
+    store = get_product_store()
+    if not store.delete_product(product_id):
+        raise APIError("Produkt nicht gefunden", 404)
+    return jsonify({"deleted": True, "id": product_id})
 
 
 @app.route("/webhook", methods=["POST"])

@@ -167,11 +167,19 @@ def test_admin_user_flow(client):
 
     patch_response = test_client.patch(
         f"/admin/users/{created['id']}",
-        json={"active": False},
+        json={"username": "kassierer1-neu", "password": "passwort-neu", "active": False},
         headers={"Authorization": "Bearer admin-token"},
     )
     assert patch_response.status_code == 200
     assert patch_response.get_json()["active"] is False
+    assert patch_response.get_json()["username"] == "kassierer1-neu"
+
+    delete_response = test_client.delete(
+        f"/admin/users/{created['id']}",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.get_json()["deleted"] is True
 
 
 def test_admin_device_flow(client):
@@ -228,7 +236,52 @@ def test_login_success(client):
     )
 
     assert response.status_code == 200
-    assert response.get_json() == {"token": "admin-token", "display_name": "admin"}
+    assert response.get_json() == {"token": "admin-token", "display_name": "admin", "device_pending": False}
+
+
+def test_login_remembers_unassigned_device_for_admin_assignment(client):
+    test_client, _ = client
+
+    create_response = test_client.post(
+        "/admin/users",
+        json={
+            "role": "kassierer",
+            "username": "neue-kasse",
+            "password": "passwort-kasse",
+        },
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert create_response.status_code == 201
+    user_id = create_response.get_json()["id"]
+
+    login_response = test_client.post(
+        "/auth/login",
+        json={"username": "neue-kasse", "password": "passwort-kasse", "device_id": "SM-A536B-demo"},
+    )
+    assert login_response.status_code == 200
+    assert login_response.get_json()["device_pending"] is True
+
+    list_response = test_client.get(
+        "/admin/devices",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert list_response.status_code == 200
+    pending_devices = list_response.get_json()["pending_devices"]
+    assert any(device["device_id"] == "SM-A536B-demo" for device in pending_devices)
+
+    assign_response = test_client.post(
+        "/admin/devices",
+        json={"device_id": "SM-A536B-demo", "user_id": user_id},
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert assign_response.status_code == 201
+
+    list_after_assign_response = test_client.get(
+        "/admin/devices",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert list_after_assign_response.status_code == 200
+    assert list_after_assign_response.get_json()["pending_devices"] == []
 
 
 def test_login_invalid_password(client):
@@ -287,6 +340,13 @@ def test_admin_product_flow(client):
     updated = patch_response.get_json()
     assert updated["active"] is False
     assert updated["price_cents"] == 200
+
+    delete_response = test_client.delete(
+        f"/admin/products/{created['id']}",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.get_json()["deleted"] is True
 
 
 def test_admin_product_validation(client):
@@ -501,6 +561,49 @@ def test_admin_web_create_user_success_uses_credentials_only(client):
     assert assignment is None
 
 
+def test_admin_web_edit_and_delete_user(client):
+    test_client, app_module = client
+    login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+    assert login_response.status_code == 302
+
+    store = app_module.get_user_store()
+    user = store.create_user(
+        name="web-edit",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="web-edit",
+        password_hash=store.hash_password("alt-passwort"),
+    )
+
+    update_response = test_client.post(
+        "/admin/web/users",
+        data={
+            "action": "update",
+            "user_id": str(user.id),
+            "role": "admin",
+            "username": "web-edit-neu",
+            "password": "neu-passwort",
+            "active": "on",
+        },
+    )
+    assert update_response.status_code == 302
+
+    updated = store.get_by_username("web-edit-neu")
+    assert updated is not None
+    assert updated.role == app_module.Role.ADMIN
+    assert store.authenticate("web-edit-neu", "neu-passwort") is not None
+
+    delete_response = test_client.post(
+        "/admin/web/users",
+        data={"action": "delete", "user_id": str(user.id)},
+    )
+    assert delete_response.status_code == 302
+    assert store.get_by_id(user.id) is None
+
+
 def test_admin_web_assign_device_to_existing_user(client):
     test_client, app_module = client
     login_response = test_client.post(
@@ -526,6 +629,45 @@ def test_admin_web_assign_device_to_existing_user(client):
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/admin/web/users")
     assignment = app_module.get_device_registry().get_device("web-kasse-2")
+    assert assignment is not None
+    assert assignment.user_id == user.id
+
+
+def test_admin_web_lists_pending_device_after_app_login(client):
+    test_client, app_module = client
+    store = app_module.get_user_store()
+    user = store.create_user(
+        name="pending-kasse",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="pending-kasse",
+        password_hash=store.hash_password("pending-passwort"),
+    )
+
+    login_response = test_client.post(
+        "/auth/login",
+        json={"username": "pending-kasse", "password": "pending-passwort", "device_id": "android-pending-1"},
+    )
+    assert login_response.status_code == 200
+
+    admin_login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+    assert admin_login_response.status_code == 302
+
+    page_response = test_client.get("/admin/web/users")
+    assert page_response.status_code == 200
+    page = page_response.get_data(as_text=True)
+    assert "android-pending-1" in page
+    assert "pending-kasse" in page
+
+    assign_response = test_client.post(
+        "/admin/web/devices",
+        data={"device_id": "android-pending-1", "user_id": str(user.id)},
+    )
+    assert assign_response.status_code == 302
+    assignment = app_module.get_device_registry().get_device("android-pending-1")
     assert assignment is not None
     assert assignment.user_id == user.id
 
@@ -570,3 +712,10 @@ def test_admin_web_product_page_create_and_update(client):
     assert updated.name == "Web Mate Gross"
     assert updated.price_cents == 250
     assert updated.active is False
+
+    delete_response = test_client.post(
+        "/admin/web/products",
+        data={"action": "delete", "product_id": str(product_id)},
+    )
+    assert delete_response.status_code == 302
+    assert all(product.id != product_id for product in store.list_products())

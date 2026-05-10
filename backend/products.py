@@ -58,6 +58,15 @@ class ProductStore:
             session.refresh(record)
             return self._to_product(record)
 
+    def delete_product(self, product_id: int) -> bool:
+        with SessionLocal() as session:
+            record = session.get(ProductRecord, product_id)
+            if not record:
+                return False
+            session.delete(record)
+            session.commit()
+            return True
+
     def has_products(self) -> bool:
         with SessionLocal() as session:
             record = session.query(ProductRecord.id).first()

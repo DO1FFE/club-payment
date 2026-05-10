@@ -36,6 +36,7 @@
         <article class="panel">
           <h2>Neuen Nutzer anlegen</h2>
           <form class="stack" method="post" action="{{ url_for('admin_web_users') }}">
+            <input type="hidden" name="action" value="create">
             <label for="username">Benutzername</label>
             <input id="username" name="username" type="text" autocomplete="username" required>
 
@@ -60,8 +61,13 @@
         <article class="panel">
           <h2>Endger&auml;t zuweisen</h2>
           <form class="stack" method="post" action="{{ url_for('admin_web_devices') }}">
-            <label for="assign_device_id">Ger&auml;te-ID</label>
-            <input id="assign_device_id" name="device_id" type="text" required>
+            <label for="assign_device_id">Ger&auml;te-ID ausw&auml;hlen oder eintragen</label>
+            <input id="assign_device_id" name="device_id" type="text" list="pending_device_ids" required>
+            <datalist id="pending_device_ids">
+              {% for pending in pending_devices %}
+              <option value="{{ pending.device_id }}">{{ pending.username or 'unbekannter Nutzer' }}</option>
+              {% endfor %}
+            </datalist>
 
             <label for="assign_user_id">Nutzer</label>
             <select id="assign_user_id" name="user_id" required>
@@ -77,30 +83,52 @@
 
       <section class="panel">
         <h2>Vorhandene Nutzer</h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Benutzername</th>
-                <th>Rolle</th>
-                <th>Aktiv</th>
-                <th>Ger&auml;t</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for user in users %}
-              <tr>
-                <td>{{ user.id }}</td>
-                <td>{{ user_identifier(user) }}</td>
-                <td>{{ user.role.value }}</td>
-                <td>{{ 'ja' if user.active else 'nein' }}</td>
-                <td>{{ assignments.get(user.id, '-') }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+        <div class="user-list">
+          {% for user in users %}
+          <form class="user-row" method="post" action="{{ url_for('admin_web_users') }}">
+            <input type="hidden" name="user_id" value="{{ user.id }}">
+            <span class="muted">#{{ user.id }}</span>
+            <input name="username" type="text" value="{{ user_identifier(user) }}" autocomplete="username" required>
+            <input name="password" type="password" autocomplete="new-password" placeholder="Neues Passwort">
+            <select name="role" required>
+              <option value="kassierer" {% if user.role.value == 'kassierer' %}selected{% endif %}>Kassierer</option>
+              <option value="admin" {% if user.role.value == 'admin' %}selected{% endif %}>Admin</option>
+            </select>
+            <label class="checkline">
+              <input name="active" type="checkbox" {% if user.active %}checked{% endif %}>
+              Aktiv
+            </label>
+            <span class="muted device-chip">{{ assignments.get(user.id, 'kein Geraet') }}</span>
+            <button class="secondary" type="submit" name="action" value="update">Speichern</button>
+            <button class="danger" type="submit" name="action" value="delete" formnovalidate>L&ouml;schen</button>
+          </form>
+          {% endfor %}
         </div>
+      </section>
+
+      <section class="panel">
+        <h2>Von der App gemeldete Endger&auml;te</h2>
+        {% if pending_devices %}
+        <div class="pending-list">
+          {% for pending in pending_devices %}
+          <form class="pending-row" method="post" action="{{ url_for('admin_web_devices') }}">
+            <input type="hidden" name="device_id" value="{{ pending.device_id }}">
+            <div>
+              <strong>{{ pending.device_id }}</strong>
+              <span class="muted">Gemeldet von {{ pending.username or 'unbekannt' }}</span>
+            </div>
+            <select name="user_id" required>
+              {% for user in users %}
+              <option value="{{ user.id }}" {% if pending.user_id == user.id %}selected{% endif %}>{{ user_identifier(user) }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit">Zuweisen</button>
+          </form>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">Noch kein unzugeordnetes Ger&auml;t von der Android-App gemeldet.</p>
+        {% endif %}
       </section>
 
       <section class="panel">
