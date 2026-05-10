@@ -211,6 +211,14 @@ button.danger:hover {
   background: #ffdeda;
 }
 
+.inline-form {
+  margin: 0;
+}
+
+.inline-form button {
+  width: 100%;
+}
+
 .alert {
   margin: 0 0 18px;
   padding: 12px 14px;
@@ -228,7 +236,7 @@ button.danger:hover {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 620px;
+  min-width: 760px;
 }
 
 th,

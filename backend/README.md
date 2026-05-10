@@ -21,6 +21,8 @@ cp .env.example .env  # then edit with your keys
 Environment variables used:
 
 - `STRIPE_SECRET_KEY` – required secret key
+- `STRIPE_LOCATION_ID` – optional Terminal Location ID (`tml_...`) for Tap to Pay; in test mode the backend uses the first existing Terminal location or creates a default test location if none exists
+- `STRIPE_LOCATION_DISPLAY_NAME`, `STRIPE_LOCATION_ADDRESS_LINE1`, `STRIPE_LOCATION_ADDRESS_CITY`, `STRIPE_LOCATION_ADDRESS_COUNTRY`, `STRIPE_LOCATION_ADDRESS_POSTAL_CODE` – optional defaults when creating a test Terminal location
 - `STRIPE_WEBHOOK_SECRET` – optional, enables webhook signature verification
 - `FLASK_SECRET_KEY` – required for stable admin web sessions in non-development deployments
 - `ADMIN_API_TOKEN`, `ADMIN_NAME`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` – optional initial admin bootstrap
@@ -43,6 +45,7 @@ python app.py
 
 - `GET /admin/web/login` und `/admin/web` -> Admin-Weboberflaeche fuer Nutzer, Geraete und Produkte
 
+- `GET /terminal/config` -> benoetigt `Authorization: Bearer <token>`, returns `{ "location_id": "tml_..." }` for Tap to Pay
 - `POST /terminal/connection_token` → benötigt `Authorization: Bearer <token>`, returns `{ "secret": "..." }` for Stripe Terminal SDK
 - `POST /pos/create_intent` → benötigt `Authorization: Bearer <token>`, body `{ "amount_cents": 150, "currency": "eur", "item": "Cola/Bier", "device": "Pixel" }`, Kassierer wird serverseitig aus dem Token gesetzt
 - `POST /webhook` (optional) → verifies Stripe signature and appends event info to `payments.log`
@@ -51,6 +54,7 @@ python app.py
 - `PATCH /admin/users/<id>` → benötigt Admin-Token, ändert `name`, `role` und/oder `active`
 - `POST /admin/devices` → benötigt Admin-Token, weist ein Gerät einem Nutzer zu (`device_id`, `user_id`)
 - `GET /admin/devices` → benötigt Admin-Token, listet Gerätezuordnungen
+- `DELETE /admin/devices/<device_id>` -> benoetigt Admin-Token, loescht eine Geraetezuordnung
 
 - `POST /admin/products`, `GET /admin/products`, `PATCH /admin/products/<id>` -> Produkte verwalten
 

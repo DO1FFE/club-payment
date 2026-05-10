@@ -41,6 +41,14 @@ allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin
 CORS(app, origins=allowed_origins or "*")
 
 WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+STRIPE_LOCATION_ID = os.getenv("STRIPE_LOCATION_ID") or os.getenv("STRIPE_TERMINAL_LOCATION_ID")
+STRIPE_LOCATION_DISPLAY_NAME = os.getenv("STRIPE_LOCATION_DISPLAY_NAME", "DARC OV L11 Club Kasse")
+STRIPE_LOCATION_ADDRESS = {
+    "line1": os.getenv("STRIPE_LOCATION_ADDRESS_LINE1", "DARC OV L11"),
+    "city": os.getenv("STRIPE_LOCATION_ADDRESS_CITY", "Berlin"),
+    "country": os.getenv("STRIPE_LOCATION_ADDRESS_COUNTRY", "DE"),
+    "postal_code": os.getenv("STRIPE_LOCATION_ADDRESS_POSTAL_CODE", "10115"),
+}
 
 
 def _get_admin_user_from_session():
@@ -91,6 +99,32 @@ def _parse_price_cents_from_form(value: str | None) -> int:
     return validate_amount_cents(int(cents))
 
 
+def _resolve_terminal_location_id() -> str:
+    configured_location_id = (STRIPE_LOCATION_ID or "").strip()
+    if configured_location_id:
+        return configured_location_id
+
+    try:
+        locations = stripe.terminal.Location.list(limit=1)
+        if getattr(locations, "data", None):
+            return locations.data[0].id
+
+        if STRIPE_SECRET_KEY.startswith("sk_test_"):
+            location = stripe.terminal.Location.create(
+                display_name=STRIPE_LOCATION_DISPLAY_NAME,
+                address=STRIPE_LOCATION_ADDRESS,
+            )
+            return location.id
+    except stripe.error.StripeError as err:
+        logger.warning("Could not resolve Stripe Terminal location: %s", err)
+        raise APIError("Stripe Terminal Location konnte nicht geladen werden", 502)
+
+    raise APIError(
+        "Keine Stripe Terminal Location gefunden. Bitte STRIPE_LOCATION_ID setzen oder eine Terminal-Location in Stripe anlegen.",
+        400,
+    )
+
+
 def _render_admin_users(admin_user, error_message: str | None = None):
     store = get_user_store()
     users = list(store.list_users())
@@ -133,6 +167,13 @@ def create_connection_token():
     authenticate_request(request)
     token = stripe.terminal.ConnectionToken.create()
     return jsonify({"secret": token.secret})
+
+
+@app.route("/terminal/config", methods=["GET"])
+@handle_errors
+def terminal_config():
+    authenticate_request(request)
+    return jsonify({"location_id": _resolve_terminal_location_id()})
 
 
 @app.route("/pos/create_intent", methods=["POST"])
@@ -263,6 +304,16 @@ def list_devices():
         for pending in registry.list_pending_devices()
     ]
     return jsonify({"devices": devices, "pending_devices": pending_devices})
+
+
+@app.route("/admin/devices/<path:device_id>", methods=["DELETE"])
+@handle_errors
+def delete_device(device_id: str):
+    authenticate_request(request, require_admin=True)
+    registry = get_device_registry()
+    if not registry.delete_device(device_id):
+        raise APIError("Geraet nicht gefunden", 404)
+    return jsonify({"deleted": True, "device_id": device_id})
 
 
 @app.route("/admin/users", methods=["POST"])
@@ -478,12 +529,19 @@ def admin_web_devices():
     if not admin_user:
         return redirect(url_for("admin_web_login"))
 
+    action = request.form.get("action", "assign")
     device_id = request.form.get("device_id")
     user_id = request.form.get("user_id")
     error_message = None
 
     if not isinstance(device_id, str) or not device_id.strip():
         error_message = "device_id ist erforderlich"
+    elif action == "delete":
+        registry = get_device_registry()
+        if not registry.delete_device(device_id.strip()):
+            error_message = "Geraet nicht gefunden"
+        else:
+            return redirect(url_for("admin_web_users"))
     else:
         try:
             user_id_value = int(user_id)
