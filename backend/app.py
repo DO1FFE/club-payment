@@ -59,6 +59,10 @@ def _format_price_euros(price_cents: int) -> str:
     return f"{price_cents / 100:.2f}".replace(".", ",")
 
 
+def _user_identifier(user) -> str:
+    return user.username or user.name
+
+
 def _parse_price_cents_from_form(value: str | None) -> int:
     if not isinstance(value, str) or not value.strip():
         raise APIError("preis ist erforderlich", 400)
@@ -86,10 +90,11 @@ def _render_admin_users(admin_user, error_message: str | None = None):
         })
     return render_template(
         "admin_users.html",
-        admin_name=admin_user.name,
+        admin_name=_user_identifier(admin_user),
         users=users,
         assignments=assignments,
         devices=devices,
+        user_identifier=_user_identifier,
         error_message=error_message,
     )
 
@@ -98,7 +103,7 @@ def _render_admin_products(admin_user, error_message: str | None = None):
     store = get_product_store()
     return render_template(
         "admin_products.html",
-        admin_name=admin_user.name,
+        admin_name=_user_identifier(admin_user),
         products=list(store.list_products()),
         format_price_euros=_format_price_euros,
         error_message=error_message,
@@ -137,7 +142,7 @@ def create_payment_intent():
     if assigned_user.id != user.id:
         raise APIError("Gerät gehört nicht zum angemeldeten Benutzer", 403)
 
-    kassierer = assigned_user.name
+    kassierer = _user_identifier(assigned_user)
 
     description = "DARC e.V. OV L11 Getränke"
     metadata = {
@@ -209,7 +214,8 @@ def assign_device():
         "device_id": assignment.device_id,
         "user_id": assignment.user_id,
         "role": user.role.value,
-        "name": user.name,
+        "name": _user_identifier(user),
+        "username": user.username,
     }), 201
 
 
@@ -225,7 +231,8 @@ def list_devices():
         devices.append({
             "device_id": assignment.device_id,
             "user_id": assignment.user_id,
-            "name": user.name if user else None,
+            "name": _user_identifier(user) if user else None,
+            "username": user.username if user else None,
             "role": user.role.value if user else None,
             "active": user.active if user else None,
         })
@@ -237,15 +244,11 @@ def list_devices():
 def create_user():
     authenticate_request(request, require_admin=True)
     payload = request.get_json(force=True, silent=True) or {}
-    name = payload.get("name")
     role_value = payload.get("role")
     active = payload.get("active", True)
-    api_token = payload.get("api_token")
     username = payload.get("username")
     password = payload.get("password")
 
-    if not isinstance(name, str) or not name.strip():
-        raise APIError("name ist erforderlich", 400)
     if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
         raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
     if not isinstance(active, bool):
@@ -262,16 +265,16 @@ def create_user():
 
     password_hash = store.hash_password(password)
     user = store.create_user(
-        name=name.strip(),
+        name=normalized_username,
         role=Role(role_value),
         active=active,
-        api_token=api_token,
         username=normalized_username,
         password_hash=password_hash,
     )
     return jsonify({
         "id": user.id,
-        "name": user.name,
+        "name": _user_identifier(user),
+        "username": user.username,
         "role": user.role.value,
         "active": user.active,
         "api_token": user.api_token,
@@ -299,7 +302,7 @@ def login():
 
     return jsonify({
         "token": user.api_token,
-        "display_name": user.name,
+        "display_name": _user_identifier(user),
     })
 
 
@@ -354,16 +357,12 @@ def admin_web_users():
 
     error_message = None
     if request.method == "POST":
-        name = request.form.get("name")
         role_value = request.form.get("role")
         username = request.form.get("username")
         password = request.form.get("password")
         active = request.form.get("active") == "on"
-        device_id = request.form.get("device_id")
 
-        if not isinstance(name, str) or not name.strip():
-            error_message = "name ist erforderlich"
-        elif role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
+        if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
             error_message = "role muss 'admin' oder 'kassierer' sein"
         elif not isinstance(username, str) or not username.strip():
             error_message = "username ist erforderlich"
@@ -375,16 +374,13 @@ def admin_web_users():
             if store.get_by_username(normalized_username):
                 error_message = "username ist bereits vergeben"
             else:
-                created_user = store.create_user(
-                    name=name.strip(),
+                store.create_user(
+                    name=normalized_username,
                     role=Role(role_value),
                     active=active,
                     username=normalized_username,
                     password_hash=store.hash_password(password),
                 )
-                if isinstance(device_id, str) and device_id.strip():
-                    registry = get_device_registry()
-                    registry.assign_device(device_id=device_id.strip(), user_id=created_user.id)
                 return redirect(url_for("admin_web_users"))
 
     return _render_admin_users(admin_user, error_message=error_message)
@@ -469,7 +465,13 @@ def list_users():
     authenticate_request(request, require_admin=True)
     store = get_user_store()
     users = [
-        {"id": user.id, "name": user.name, "role": user.role.value, "active": user.active}
+        {
+            "id": user.id,
+            "name": _user_identifier(user),
+            "username": user.username,
+            "role": user.role.value,
+            "active": user.active,
+        }
         for user in store.list_users()
     ]
     return jsonify({"users": users})
@@ -505,7 +507,8 @@ def update_user(user_id: int):
         raise APIError("User nicht gefunden", 404)
     return jsonify({
         "id": user.id,
-        "name": user.name,
+        "name": _user_identifier(user),
+        "username": user.username,
         "role": user.role.value,
         "active": user.active,
     })

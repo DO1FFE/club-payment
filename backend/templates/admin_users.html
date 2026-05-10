@@ -2,111 +2,132 @@
 <html lang="de">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Admin Nutzerverwaltung</title>
+    <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
   </head>
   <body>
-    <h1>Nutzerverwaltung</h1>
-    <p>Angemeldet als: {{ admin_name }}</p>
-    <nav>
-      <a href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
-      |
-      <a href="{{ url_for('admin_web_products') }}">Produkte</a>
-    </nav>
-    <form method="post" action="{{ url_for('admin_web_logout') }}">
-      <button type="submit">Abmelden</button>
-    </form>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('admin_web_users') }}">
+        <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
+        <span>Club Payment</span>
+      </a>
+      <nav class="nav">
+        <a class="nav-link active" href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
+        <a class="nav-link" href="{{ url_for('admin_web_products') }}">Produkte</a>
+      </nav>
+      <form method="post" action="{{ url_for('admin_web_logout') }}">
+        <button class="secondary" type="submit">Abmelden</button>
+      </form>
+    </header>
 
-    {% if error_message %}
-    <p style="color: #b00020;">{{ error_message }}</p>
-    {% endif %}
+    <main class="page">
+      <section class="page-heading">
+        <p class="eyebrow">Angemeldet als {{ admin_name }}</p>
+        <h1>Nutzerverwaltung</h1>
+      </section>
 
-    <h2>Vorhandene Nutzer</h2>
-    <table border="1" cellpadding="4">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Name</th>
-          <th>Rolle</th>
-          <th>Aktiv</th>
-          <th>Username</th>
-          <th>Ger&auml;t</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for user in users %}
-        <tr>
-          <td>{{ user.id }}</td>
-          <td>{{ user.name }}</td>
-          <td>{{ user.role.value }}</td>
-          <td>{{ 'ja' if user.active else 'nein' }}</td>
-          <td>{{ user.username or '-' }}</td>
-          <td>{{ assignments.get(user.id, '-') }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+      {% if error_message %}
+      <p class="alert">{{ error_message }}</p>
+      {% endif %}
 
-    <h2>Neuen Nutzer anlegen</h2>
-    <form method="post" action="{{ url_for('admin_web_users') }}">
-      <label for="name">Name</label>
-      <input id="name" name="name" type="text" required>
-      <br>
-      <label for="role">Rolle</label>
-      <select id="role" name="role" required>
-        <option value="kassierer">kassierer</option>
-        <option value="admin">admin</option>
-      </select>
-      <br>
-      <label for="username">Username</label>
-      <input id="username" name="username" type="text" required>
-      <br>
-      <label for="password">Passwort</label>
-      <input id="password" name="password" type="password" required>
-      <br>
-      <label for="active">Aktiv</label>
-      <input id="active" name="active" type="checkbox" checked>
-      <br>
-      <label for="device_id">Ger&auml;tezuweisung (optional)</label>
-      <input id="device_id" name="device_id" type="text">
-      <br>
-      <button type="submit">Nutzer erstellen</button>
-    </form>
+      <section class="grid two">
+        <article class="panel">
+          <h2>Neuen Nutzer anlegen</h2>
+          <form class="stack" method="post" action="{{ url_for('admin_web_users') }}">
+            <label for="username">Benutzername</label>
+            <input id="username" name="username" type="text" autocomplete="username" required>
 
-    <h2>Endger&auml;t bestehendem Nutzer zuweisen</h2>
-    <form method="post" action="{{ url_for('admin_web_devices') }}">
-      <label for="assign_device_id">Ger&auml;te-ID</label>
-      <input id="assign_device_id" name="device_id" type="text" required>
-      <br>
-      <label for="assign_user_id">Nutzer</label>
-      <select id="assign_user_id" name="user_id" required>
-        {% for user in users %}
-        <option value="{{ user.id }}">{{ user.name }} ({{ user.username or user.id }})</option>
-        {% endfor %}
-      </select>
-      <br>
-      <button type="submit">Ger&auml;t zuweisen</button>
-    </form>
+            <label for="password">Passwort</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" required>
 
-    <h2>Vorhandene Endger&auml;te</h2>
-    <table border="1" cellpadding="4">
-      <thead>
-        <tr>
-          <th>Ger&auml;te-ID</th>
-          <th>Nutzer</th>
-          <th>Rolle</th>
-          <th>Aktiv</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for device in devices %}
-        <tr>
-          <td>{{ device.device_id }}</td>
-          <td>{{ device.user.name if device.user else '-' }}</td>
-          <td>{{ device.user.role.value if device.user else '-' }}</td>
-          <td>{{ 'ja' if device.user and device.user.active else 'nein' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+            <label for="role">Rolle</label>
+            <select id="role" name="role" required>
+              <option value="kassierer">Kassierer</option>
+              <option value="admin">Admin</option>
+            </select>
+
+            <label class="checkline" for="active">
+              <input id="active" name="active" type="checkbox" checked>
+              Aktiv
+            </label>
+
+            <button type="submit">Nutzer erstellen</button>
+          </form>
+        </article>
+
+        <article class="panel">
+          <h2>Endger&auml;t zuweisen</h2>
+          <form class="stack" method="post" action="{{ url_for('admin_web_devices') }}">
+            <label for="assign_device_id">Ger&auml;te-ID</label>
+            <input id="assign_device_id" name="device_id" type="text" required>
+
+            <label for="assign_user_id">Nutzer</label>
+            <select id="assign_user_id" name="user_id" required>
+              {% for user in users %}
+              <option value="{{ user.id }}">{{ user_identifier(user) }}</option>
+              {% endfor %}
+            </select>
+
+            <button type="submit">Ger&auml;t zuweisen</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Vorhandene Nutzer</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Benutzername</th>
+                <th>Rolle</th>
+                <th>Aktiv</th>
+                <th>Ger&auml;t</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in users %}
+              <tr>
+                <td>{{ user.id }}</td>
+                <td>{{ user_identifier(user) }}</td>
+                <td>{{ user.role.value }}</td>
+                <td>{{ 'ja' if user.active else 'nein' }}</td>
+                <td>{{ assignments.get(user.id, '-') }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Vorhandene Endger&auml;te</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ger&auml;te-ID</th>
+                <th>Nutzer</th>
+                <th>Rolle</th>
+                <th>Aktiv</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for device in devices %}
+              <tr>
+                <td>{{ device.device_id }}</td>
+                <td>{{ user_identifier(device.user) if device.user else '-' }}</td>
+                <td>{{ device.user.role.value if device.user else '-' }}</td>
+                <td>{{ 'ja' if device.user and device.user.active else 'nein' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
   </body>
 </html>

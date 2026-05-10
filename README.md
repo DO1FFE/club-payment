@@ -39,7 +39,7 @@ python app.py  # läuft auf Port 4040
 4. Keine Secret Keys in der App; die App holt Connection Token & PaymentIntents ausschließlich vom Backend.
 
 5. Die App zeigt ihre Geraete-ID im Login- und Zahlungsbildschirm an; diese ID muss im Admin-Web einem Nutzer zugewiesen werden.
-6. Die App verbindet vor dem NFC-Tap automatisch einen Local-Mobile/Tap-to-Pay-Reader. Ohne `LOCATION_ID` bricht der echte NFC-Zahlungsfluss mit einer klaren Fehlermeldung ab.
+6. Die Zahlung laeuft ueber das NFC-Modul des Android-Handys mit Stripe Tap to Pay. Es wird kein externes Terminal oder Kartenlesegeraet verbunden. Ohne `LOCATION_ID` bricht der echte NFC-Zahlungsfluss mit einer klaren Fehlermeldung ab.
 
 ## APK bauen
 ```bash
@@ -69,8 +69,8 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 ## Hinweise zu Netzwerk & Sicherheit
 - Network Security Config erlaubt Klartext für `payment.lima11.de` sowie `10.0.2.2/localhost` für lokale Emulator-Tests; produktiv HTTPS nutzen, sobald der Proxy TLS bereitstellt.
 - R8/ProGuard ist für Release aktiviert; Stripe Terminal-Klassen werden per Rule erhalten.
-- Tap to Pay Flow ist nativ über das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present).
-- Auth-Persistenz-Entscheidung (Android): **Token-only für „Angemeldet bleiben“**. Es werden keine Passwörter gespeichert. Optional kann nur der Benutzername für die Login-Vorbelegung gespeichert werden.
+- Tap to Pay Flow ist nativ ueber das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present, NFC direkt am Android-Handy).
+- Auth-Persistenz-Entscheidung (Android): Bei aktivierter Option `Zugangsdaten merken` werden Benutzername und Passwort lokal in der App gespeichert und beim naechsten Login vorausgefuellt. Beim Abmelden bleibt diese Vorbelegung erhalten; Login ohne aktivierte Option loescht sie.
 
 ## Backend-API aus der App
 - `POST /terminal/connection_token` → holt mit `Authorization: Bearer <token>` ein Connection Token für das Terminal SDK

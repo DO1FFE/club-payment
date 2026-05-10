@@ -45,7 +45,7 @@ class BackendConnectionTokenProvider(private val service: BackendService) : Conn
 sealed class PaymentStatus {
     object Idle : PaymentStatus()
     object CreatingIntent : PaymentStatus()
-    object ConnectingReader : PaymentStatus()
+    object ActivatingPhoneNfc : PaymentStatus()
     object WaitingForTap : PaymentStatus()
     object Processing : PaymentStatus()
     object FetchingReceipt : PaymentStatus()
@@ -82,14 +82,14 @@ class TerminalManager(private val context: Context, private val backendService: 
         return retrievePaymentIntent(response.client_secret)
     }
 
-    suspend fun ensureReaderConnected() {
+    suspend fun ensurePhoneNfcReady() {
         ensureInitialized()
         val terminal = Terminal.getInstance()
         if (terminal.connectionStatus == ConnectionStatus.CONNECTED && terminal.connectedReader != null) {
             return
         }
-        val reader = discoverLocalMobileReader()
-        connectLocalMobileReader(reader)
+        val reader = discoverPhoneTapToPayReader()
+        connectPhoneTapToPay(reader)
     }
 
     suspend fun collectPayment(paymentIntent: PaymentIntent): PaymentIntent = suspendCancellableCoroutine { cont ->
@@ -131,7 +131,7 @@ class TerminalManager(private val context: Context, private val backendService: 
         })
     }
 
-    private suspend fun discoverLocalMobileReader(): Reader = suspendCancellableCoroutine { cont ->
+    private suspend fun discoverPhoneTapToPayReader(): Reader = suspendCancellableCoroutine { cont ->
         ensureInitialized()
         var cancelable: Cancelable? = null
         var completed = false
@@ -156,7 +156,7 @@ class TerminalManager(private val context: Context, private val backendService: 
                 override fun onSuccess() {
                     if (!completed && cont.isActive) {
                         completed = true
-                        cont.resumeWithException(IllegalStateException("Kein Tap-to-Pay-Leser gefunden"))
+                        cont.resumeWithException(IllegalStateException("Dieses Handy kann nicht als Tap-to-Pay-NFC-Terminal verwendet werden"))
                     }
                 }
 
@@ -171,12 +171,12 @@ class TerminalManager(private val context: Context, private val backendService: 
         cont.invokeOnCancellation { cancelable?.cancel(NoopCallback) }
     }
 
-    private suspend fun connectLocalMobileReader(reader: Reader): Reader = suspendCancellableCoroutine { cont ->
+    private suspend fun connectPhoneTapToPay(reader: Reader): Reader = suspendCancellableCoroutine { cont ->
         ensureInitialized()
         val locationId = BuildConfig.LOCATION_ID.trim()
         if (locationId.isBlank()) {
             cont.resumeWithException(
-                IllegalStateException("LOCATION_ID fehlt; fuer Stripe Tap to Pay muss eine Stripe-Location-ID konfiguriert sein")
+                IllegalStateException("LOCATION_ID fehlt; fuer Tap to Pay mit dem Handy muss eine Stripe-Location-ID konfiguriert sein")
             )
             return@suspendCancellableCoroutine
         }

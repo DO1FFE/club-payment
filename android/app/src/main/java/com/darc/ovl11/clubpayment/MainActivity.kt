@@ -5,24 +5,44 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,10 +52,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -49,6 +74,16 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
+
+private val ClubGreen = Color(0xFF0D5C46)
+private val ClubGreenDark = Color(0xFF094333)
+private val ClubGold = Color(0xFFF1B642)
+private val ClubBackground = Color(0xFFF5F7F4)
+private val ClubSurface = Color(0xFFFFFFFF)
+private val ClubInk = Color(0xFF16211D)
+private val ClubMuted = Color(0xFF60716A)
+private val ClubBorder = Color(0xFFD9E1DC)
+private val ClubDanger = Color(0xFFB42318)
 
 class MainActivity : ComponentActivity() {
     private val authStore by lazy { AuthStore(applicationContext) }
@@ -76,7 +111,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            ClubPaymentTheme {
                 AppContent(viewModel, authViewModel)
             }
         }
@@ -160,8 +195,8 @@ class PaymentViewModel(
                 }
                 _status.value = PaymentStatus.CreatingIntent
                 val intent = terminalManager.createIntent(amountCents, itemLabel, userName, deviceName)
-                _status.value = PaymentStatus.ConnectingReader
-                terminalManager.ensureReaderConnected()
+                _status.value = PaymentStatus.ActivatingPhoneNfc
+                terminalManager.ensurePhoneNfcReady()
                 _status.value = PaymentStatus.WaitingForTap
                 val collected = terminalManager.collectPayment(intent)
                 _status.value = PaymentStatus.Processing
@@ -197,24 +232,45 @@ class PaymentViewModel(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ClubPaymentTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = lightColorScheme(
+            primary = ClubGreen,
+            onPrimary = Color.White,
+            secondary = ClubGold,
+            onSecondary = ClubInk,
+            background = ClubBackground,
+            surface = ClubSurface,
+            onSurface = ClubInk,
+            error = ClubDanger,
+        ),
+        content = content
+    )
+}
+
 @Composable
 fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
     val authState by authViewModel.authState.collectAsState()
     val deviceName = viewModel.deviceName
 
-    if (authState == null) {
-        LoginScreen(authViewModel, deviceName)
-    } else {
-        androidx.compose.runtime.LaunchedEffect(authState?.token) {
-            viewModel.loadProducts()
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = ClubBackground
+    ) {
+        if (authState == null) {
+            LoginScreen(authViewModel, deviceName)
+        } else {
+            LaunchedEffect(authState?.token) {
+                viewModel.loadProducts()
+            }
+            PaymentScreen(
+                viewModel = viewModel,
+                userName = authState?.userName.orEmpty(),
+                deviceName = deviceName,
+                onLogout = { authViewModel.logout() }
+            )
         }
-        PaymentScreen(
-            viewModel = viewModel,
-            userName = authState?.userName.orEmpty(),
-            deviceName = deviceName,
-            onLogout = { authViewModel.logout() }
-        )
     }
 }
 
@@ -223,73 +279,134 @@ fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
     var userName by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var rememberCredentials by remember { mutableStateOf(false) }
-    val rememberedUserName by authViewModel.rememberedUserName.collectAsState()
+    val rememberedCredentials by authViewModel.rememberedCredentials.collectAsState()
     val loginStatus by authViewModel.loginStatus.collectAsState()
 
-    LaunchedEffect(rememberedUserName) {
-        if (userName.isBlank() && !rememberedUserName.isNullOrBlank()) {
-            userName = rememberedUserName.orEmpty()
+    LaunchedEffect(rememberedCredentials) {
+        val credentials = rememberedCredentials
+        if (credentials != null) {
+            if (userName.isBlank()) {
+                userName = credentials.userName
+            }
+            if (password.isBlank()) {
+                password = credentials.password
+            }
             rememberCredentials = true
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .background(ClubBackground)
     ) {
-        Text(text = "Gerät anmelden", style = MaterialTheme.typography.headlineSmall)
-        OutlinedTextField(
-            value = userName,
-            onValueChange = { userName = it },
-            label = { Text("Benutzername") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-            modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Passwort") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth()
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
-            Checkbox(
-                checked = rememberCredentials,
-                onCheckedChange = { rememberCredentials = it }
+            BrandHeader(
+                title = "Club Kasse",
+                subtitle = "DARC OV L11",
+                detail = "Kartenzahlung per NFC"
             )
-            Text("Anmeldedaten merken (nur Benutzername)")
-        }
-        Text(
-            text = "Angemeldet bleiben nutzt ausschließlich Token-Speicherung.",
-            style = MaterialTheme.typography.bodySmall
-        )
-        Text(
-            text = "Geräte-ID: $deviceName",
-            style = MaterialTheme.typography.bodySmall
-        )
-        Button(
-            onClick = { authViewModel.login(userName.trim(), password, rememberCredentials) },
-            enabled = userName.isNotBlank() && password.isNotBlank() && loginStatus !is LoginStatus.Loading,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Anmelden")
-        }
-        if (loginStatus is LoginStatus.Error) {
-            Text(
-                text = "Fehler: ${(loginStatus as LoginStatus.Error).message}",
-                color = MaterialTheme.colorScheme.error
-            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(containerColor = ClubSurface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = "Anmelden",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    OutlinedTextField(
+                        value = userName,
+                        onValueChange = { userName = it },
+                        label = { Text("Benutzername") },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_person),
+                                contentDescription = null
+                            )
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("Passwort") },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_lock),
+                                contentDescription = null
+                            )
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = rememberCredentials,
+                            onCheckedChange = { rememberCredentials = it }
+                        )
+                        Text(
+                            text = "Zugangsdaten merken",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    InfoPill(
+                        icon = R.drawable.ic_device,
+                        text = "Geräte-ID: $deviceName"
+                    )
+                    Button(
+                        onClick = { authViewModel.login(userName.trim(), password, rememberCredentials) },
+                        enabled = userName.isNotBlank() && password.isNotBlank() && loginStatus !is LoginStatus.Loading,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = ClubGreen),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)
+                    ) {
+                        if (loginStatus is LoginStatus.Loading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_login),
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Anmelden")
+                    }
+                    if (loginStatus is LoginStatus.Error) {
+                        ErrorText("Fehler: ${(loginStatus as LoginStatus.Error).message}")
+                    }
+                }
+            }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: String, onLogout: () -> Unit) {
     val status by viewModel.status.collectAsState()
@@ -303,50 +420,25 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(text = "DARC e.V. OV L11 – Getränke", style = MaterialTheme.typography.headlineSmall)
-                Text(text = "Angemeldet als $userName", style = MaterialTheme.typography.bodyMedium)
-                Text(text = "Geräte-ID: $deviceName", style = MaterialTheme.typography.bodySmall)
-            }
-            Button(onClick = onLogout) {
-                Text("Abmelden")
-            }
-        }
-
-        if (productsLoading) {
-            CircularProgressIndicator()
-        }
+        PaymentHeader(
+            userName = userName,
+            deviceName = deviceName,
+            onLogout = onLogout
+        )
 
         productsError?.let { errorText ->
-            Text(
-                text = "Produkte konnten nicht geladen werden: $errorText",
-                color = MaterialTheme.colorScheme.error
-            )
+            ErrorPanel("Produkte konnten nicht geladen werden: $errorText")
         }
 
-        products.chunked(2).forEach { rowProducts ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                rowProducts.forEach { product ->
-                    PriceButton(product.name, product.price_cents) {
-                        viewModel.addProduct(product)
-                    }
-                }
-                if (rowProducts.size == 1) {
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-        }
+        ProductSection(
+            products = products,
+            productsLoading = productsLoading,
+            onAddProduct = { viewModel.addProduct(it) }
+        )
 
         CartCard(
             products = products,
@@ -360,12 +452,206 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
         Button(
             onClick = { viewModel.startPayment(totalAmountCents, itemLabel) },
             enabled = isPayButtonEnabled(totalAmountCents, status),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 54.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = ClubGreen),
+            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)
         ) {
-            Text("Bezahlen")
+            Icon(
+                painter = painterResource(R.drawable.ic_nfc),
+                contentDescription = null,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Bezahlen", fontWeight = FontWeight.Bold)
         }
 
         StatusCard(status)
+
+        val success = status as? PaymentStatus.Success
+        if (success?.receiptUrl != null) {
+            ReceiptQrCard(success.receiptUrl)
+        }
+    }
+}
+
+@Composable
+fun BrandHeader(title: String, subtitle: String, detail: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_club_payment_logo),
+            contentDescription = null,
+            modifier = Modifier.size(56.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = subtitle.uppercase(Locale.GERMANY),
+                color = ClubMuted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = detail,
+                color = ClubMuted,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+fun PaymentHeader(userName: String, deviceName: String, onLogout: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = ClubGreen),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_club_payment_logo),
+                        contentDescription = null,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Club Kasse",
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Angemeldet als $userName",
+                            color = Color.White.copy(alpha = 0.86f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                TextButton(onClick = onLogout) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_logout),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Abmelden", color = Color.White)
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color.White.copy(alpha = 0.12f),
+                contentColor = Color.White
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_device),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = "Geräte-ID: $deviceName",
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ProductSection(
+    products: List<ProductDto>,
+    productsLoading: Boolean,
+    onAddProduct: (ProductDto) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = ClubSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SectionTitle(
+                icon = R.drawable.ic_card,
+                title = "Produkte",
+                trailing = if (productsLoading) "Lädt" else "${products.size} aktiv"
+            )
+            if (productsLoading) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text("Produkte werden geladen", color = ClubMuted)
+                }
+            } else if (products.isEmpty()) {
+                Text(
+                    text = "Keine aktiven Produkte vorhanden.",
+                    color = ClubMuted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                products.chunked(2).forEach { rowProducts ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        rowProducts.forEach { product ->
+                            PriceButton(product.name, product.price_cents) {
+                                onAddProduct(product)
+                            }
+                        }
+                        if (rowProducts.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -378,36 +664,114 @@ fun CartCard(
     onRemoveProduct: (ProductDto) -> Unit,
     onClearCart: () -> Unit,
 ) {
-    val formatter = NumberFormat.getCurrencyInstance(Locale.GERMANY)
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(text = "Warenkorb", style = MaterialTheme.typography.titleMedium)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = ClubSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SectionTitle(
+                icon = R.drawable.ic_cart,
+                title = "Warenkorb",
+                trailing = formatCurrency(totalAmountCents)
+            )
             if (selectedItems.isEmpty()) {
-                Text(text = "Noch keine Produkte ausgewählt.")
+                Text(
+                    text = "Noch keine Produkte ausgewählt.",
+                    color = ClubMuted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             } else {
-                products
-                    .filter { selectedItems.containsKey(it.id) }
-                    .forEach { product ->
-                        val quantity = selectedItems[product.id] ?: 0
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(text = "${product.name} × $quantity")
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { onRemoveProduct(product) }) { Text("−") }
-                                Button(onClick = { onAddProduct(product) }) { Text("+") }
-                            }
-                        }
+                val selectedProducts = products.filter { selectedItems.containsKey(it.id) }
+                selectedProducts.forEachIndexed { index, product ->
+                    val quantity = selectedItems[product.id] ?: 0
+                    CartItemRow(
+                        product = product,
+                        quantity = quantity,
+                        onAddProduct = onAddProduct,
+                        onRemoveProduct = onRemoveProduct
+                    )
+                    if (index < selectedProducts.size - 1) {
+                        HorizontalDivider(color = ClubBorder)
                     }
-                Button(onClick = onClearCart, modifier = Modifier.fillMaxWidth()) {
+                }
+                OutlinedButton(
+                    onClick = onClearCart,
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, ClubBorder)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_clear),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text("Warenkorb leeren")
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun CartItemRow(
+    product: ProductDto,
+    quantity: Int,
+    onAddProduct: (ProductDto) -> Unit,
+    onRemoveProduct: (ProductDto) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "Gesamt: ${formatter.format(totalAmountCents / 100.0)}",
-                style = MaterialTheme.typography.titleMedium
+                text = product.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "${quantity} x ${formatCurrency(product.price_cents)}",
+                color = ClubMuted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Surface(
+            shape = CircleShape,
+            color = ClubBackground,
+            contentColor = ClubInk
+        ) {
+            Text(
+                text = quantity.toString(),
+                modifier = Modifier
+                    .widthIn(min = 34.dp)
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                fontWeight = FontWeight.Bold
+            )
+        }
+        IconButton(
+            onClick = { onRemoveProduct(product) },
+            modifier = Modifier.size(42.dp)
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_remove),
+                contentDescription = "${product.name} entfernen"
+            )
+        }
+        IconButton(
+            onClick = { onAddProduct(product) },
+            modifier = Modifier.size(42.dp)
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_add),
+                contentDescription = "${product.name} hinzufügen"
             )
         }
     }
@@ -415,38 +779,94 @@ fun CartCard(
 
 @Composable
 fun RowScope.PriceButton(label: String, amountCents: Int, onClick: () -> Unit) {
-    val formatter = NumberFormat.getCurrencyInstance(Locale.GERMANY)
-    val amountFormatted = formatter.format(amountCents / 100.0)
-    Button(onClick = onClick, modifier = Modifier.weight(1f)) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(text = label)
-            Text(text = amountFormatted, style = MaterialTheme.typography.titleMedium)
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier
+            .weight(1f)
+            .heightIn(min = 92.dp),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, ClubBorder),
+        contentPadding = PaddingValues(12.dp)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_add),
+                contentDescription = null,
+                tint = ClubGreen,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = label,
+                color = ClubInk,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = formatCurrency(amountCents),
+                color = ClubGreen,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
 
 @Composable
 fun StatusCard(status: PaymentStatus) {
-    val message = when (status) {
-        PaymentStatus.Idle -> "Bereit für Zahlung"
-        PaymentStatus.CreatingIntent -> "Intent wird erstellt..."
-        PaymentStatus.ConnectingReader -> "NFC-Leser wird verbunden"
-        PaymentStatus.WaitingForTap -> "Bitte Karte/Handy an das Gerät halten"
-        PaymentStatus.Processing -> "Zahlung wird verarbeitet"
-        PaymentStatus.FetchingReceipt -> "Beleg wird abgerufen..."
-        is PaymentStatus.Success -> "Erfolg: ${(status.amountCents / 100.0)} € – ${status.intentId}"
-        is PaymentStatus.Error -> "Fehler: ${status.message}"
-    }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(text = message)
-            if (status is PaymentStatus.Success) {
-                status.receiptError?.let { errorText ->
-                    Text(text = "Beleg konnte nicht geladen werden: $errorText", color = MaterialTheme.colorScheme.error)
+    val statusInfo = statusInfo(status)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = ClubSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    modifier = Modifier.size(42.dp),
+                    shape = CircleShape,
+                    color = statusInfo.tint.copy(alpha = 0.14f),
+                    contentColor = statusInfo.tint
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            painter = painterResource(statusInfo.icon),
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
-                status.receiptUrl?.let { receiptUrl ->
-                    ReceiptQrCard(receiptUrl)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = statusInfo.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = statusInfo.message,
+                        color = ClubMuted,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
+            }
+            val success = status as? PaymentStatus.Success
+            if (success?.receiptError != null) {
+                ErrorText("Beleg konnte nicht geladen werden: ${success.receiptError}")
             }
         }
     }
@@ -455,44 +875,255 @@ fun StatusCard(status: PaymentStatus) {
 @Composable
 fun ReceiptQrCard(receiptUrl: String) {
     val qrBitmap = remember(receiptUrl) { generateQrCodeBitmap(receiptUrl) }
-    if (qrBitmap == null) {
-        Text(text = "QR-Code konnte nicht erstellt werden", color = MaterialTheme.colorScheme.error)
-        return
-    }
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = ClubSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.padding(18.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = "Beleg als QR-Code", style = MaterialTheme.typography.titleMedium)
-            Image(
-                bitmap = qrBitmap.asImageBitmap(),
-                contentDescription = "QR-Code für den Beleg",
-                modifier = Modifier.fillMaxWidth()
+            SectionTitle(
+                icon = R.drawable.ic_receipt,
+                title = "Quittung",
+                trailing = "QR-Code"
+            )
+            if (qrBitmap == null) {
+                ErrorText("QR-Code konnte nicht erstellt werden")
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, ClubBorder),
+                    color = Color.White
+                ) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "QR-Code für die Quittung",
+                        modifier = Modifier
+                            .size(220.dp)
+                            .padding(10.dp)
+                    )
+                }
+                Text(
+                    text = "QR-Code scannen, um die Quittung anzusehen.",
+                    color = ClubMuted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = receiptUrl,
+                    color = ClubMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SectionTitle(icon: Int, title: String, trailing: String? = null) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Surface(
+            modifier = Modifier.size(34.dp),
+            shape = CircleShape,
+            color = ClubGreen.copy(alpha = 0.12f),
+            contentColor = ClubGreen
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    painter = painterResource(icon),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f)
+        )
+        trailing?.let {
+            Text(
+                text = it,
+                color = ClubMuted,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
 }
 
+@Composable
+fun InfoPill(icon: Int, text: String) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = ClubBackground,
+        contentColor = ClubInk,
+        border = BorderStroke(1.dp, ClubBorder)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+fun ErrorPanel(message: String) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = ClubDanger.copy(alpha = 0.09f),
+        contentColor = ClubDanger,
+        border = BorderStroke(1.dp, ClubDanger.copy(alpha = 0.24f))
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_warning),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+fun ErrorText(message: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_warning),
+            contentDescription = null,
+            tint = ClubDanger,
+            modifier = Modifier.size(18.dp)
+        )
+        Text(
+            text = message,
+            color = ClubDanger,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+private data class StatusInfo(
+    val title: String,
+    val message: String,
+    val icon: Int,
+    val tint: Color,
+)
+
+private fun statusInfo(status: PaymentStatus): StatusInfo {
+    return when (status) {
+        PaymentStatus.Idle -> StatusInfo(
+            title = "Bereit",
+            message = "Warenkorb füllen und NFC-Zahlung starten.",
+            icon = R.drawable.ic_nfc,
+            tint = ClubGreen
+        )
+        PaymentStatus.CreatingIntent -> StatusInfo(
+            title = "Zahlung wird vorbereitet",
+            message = "Der Zahlungsauftrag wird beim Server erstellt.",
+            icon = R.drawable.ic_card,
+            tint = ClubGold
+        )
+        PaymentStatus.ActivatingPhoneNfc -> StatusInfo(
+            title = "Handy-NFC wird aktiviert",
+            message = "Dieses Handy wird als Tap-to-Pay-Terminal vorbereitet.",
+            icon = R.drawable.ic_device,
+            tint = ClubGold
+        )
+        PaymentStatus.WaitingForTap -> StatusInfo(
+            title = "Bereit zum Auflegen",
+            message = "Karte oder Wallet an den NFC-Bereich dieses Handys halten.",
+            icon = R.drawable.ic_nfc,
+            tint = ClubGold
+        )
+        PaymentStatus.Processing -> StatusInfo(
+            title = "Zahlung läuft",
+            message = "Die Zahlung wird verarbeitet.",
+            icon = R.drawable.ic_card,
+            tint = ClubGold
+        )
+        PaymentStatus.FetchingReceipt -> StatusInfo(
+            title = "Quittung wird geladen",
+            message = "Die Beleg-URL wird von Stripe abgerufen.",
+            icon = R.drawable.ic_receipt,
+            tint = ClubGold
+        )
+        is PaymentStatus.Success -> StatusInfo(
+            title = "Zahlung erfolgreich",
+            message = "${formatCurrency(status.amountCents)} bezahlt. PaymentIntent: ${status.intentId}",
+            icon = R.drawable.ic_receipt,
+            tint = ClubGreen
+        )
+        is PaymentStatus.Error -> StatusInfo(
+            title = "Fehler",
+            message = status.message,
+            icon = R.drawable.ic_warning,
+            tint = ClubDanger
+        )
+    }
+}
+
 fun generateQrCodeBitmap(content: String, size: Int = 512): Bitmap? {
     return try {
-        val writer = QRCodeWriter()
-        val matrix = writer.encode(content, BarcodeFormat.QR_CODE, size, size)
-        val pixels = IntArray(size * size)
-        for (y in 0 until size) {
-            val offset = y * size
-            for (x in 0 until size) {
-                pixels[offset + x] = if (matrix.get(x, y)) {
-                    0xFF000000.toInt()
-                } else {
-                    0xFFFFFFFF.toInt()
-                }
+        val pixels = generateQrCodePixels(content, size) ?: return null
+        Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+    } catch (e: Exception) {
+        null
+    }
+}
+
+fun generateQrCodePixels(content: String, size: Int = 512): IntArray? {
+    return try {
+        val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
+        IntArray(size * size) { index ->
+            val x = index % size
+            val y = index / size
+            if (matrix.get(x, y)) {
+                0xFF000000.toInt()
+            } else {
+                0xFFFFFFFF.toInt()
             }
         }
-        Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
     } catch (e: Exception) {
         null
     }
@@ -519,9 +1150,14 @@ fun createItemLabel(products: List<ProductDto>, selectedItems: Map<Int, Int>): S
 
 fun isPayButtonEnabled(totalAmountCents: Int, status: PaymentStatus): Boolean {
     val paymentInProgress = status is PaymentStatus.CreatingIntent ||
-        status is PaymentStatus.ConnectingReader ||
+        status is PaymentStatus.ActivatingPhoneNfc ||
         status is PaymentStatus.WaitingForTap ||
         status is PaymentStatus.Processing ||
         status is PaymentStatus.FetchingReceipt
     return totalAmountCents > 0 && !paymentInProgress
+}
+
+fun formatCurrency(amountCents: Int): String {
+    val formatter = NumberFormat.getCurrencyInstance(Locale.GERMANY)
+    return formatter.format(amountCents / 100.0)
 }
