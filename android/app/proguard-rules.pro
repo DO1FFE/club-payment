@@ -14,3 +14,5 @@
 -dontwarn okio.**
 -dontwarn org.slf4j.impl.StaticLoggerBinder
 -dontwarn org.slf4j.impl.StaticMDCBinder
+-dontwarn java.beans.ConstructorProperties
+-dontwarn java.beans.Transient
