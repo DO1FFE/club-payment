@@ -135,6 +135,55 @@ def test_create_payment_intent_requires_auth(client):
     assert response.get_json()["error"] == "Authorization-Header fehlt"
 
 
+def test_get_receipt_returns_stripe_receipt_url(client, monkeypatch):
+    test_client, app_module = client
+
+    class DummyCharge:
+        receipt_url = "https://pay.stripe.com/receipts/test-receipt"
+
+    class DummyIntent:
+        latest_charge = DummyCharge()
+
+    def fake_retrieve(payment_intent_id, expand):
+        assert payment_intent_id == "pi_paid"
+        assert "latest_charge" in expand
+        return DummyIntent()
+
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "retrieve", staticmethod(fake_retrieve))
+
+    response = test_client.get(
+        "/pos/receipt/pi_paid",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"receipt_url": "https://pay.stripe.com/receipts/test-receipt"}
+
+
+def test_get_receipt_without_charge_returns_404(client, monkeypatch):
+    test_client, app_module = client
+
+    class DummyCharges:
+        data = []
+
+    class DummyIntent:
+        latest_charge = None
+        charges = DummyCharges()
+
+    def fake_retrieve(payment_intent_id, expand):
+        return DummyIntent()
+
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "retrieve", staticmethod(fake_retrieve))
+
+    response = test_client.get(
+        "/pos/receipt/pi_unpaid",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Beleg-URL nicht verfügbar"
+
+
 def test_admin_user_flow(client):
     test_client, _ = client
 
