@@ -149,6 +149,7 @@ label {
 input,
 select {
   width: 100%;
+  min-width: 0;
   min-height: 42px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -176,6 +177,7 @@ select:focus {
 }
 
 button {
+  min-width: 0;
   min-height: 42px;
   border: 0;
   border-radius: 8px;
@@ -260,6 +262,7 @@ th {
   display: grid;
   gap: 10px;
   align-items: center;
+  min-width: 0;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -267,11 +270,11 @@ th {
 }
 
 .product-row {
-  grid-template-columns: 64px minmax(180px, 1fr) minmax(110px, 0.35fr) 110px 120px 110px;
+  grid-template-columns: 56px minmax(150px, 1fr) minmax(96px, 0.35fr) 86px 110px 96px;
 }
 
 .user-row {
-  grid-template-columns: 64px minmax(150px, 1fr) minmax(150px, 0.8fr) 130px 96px minmax(120px, 0.8fr) 120px 110px;
+  grid-template-columns: 48px minmax(130px, 1.1fr) minmax(130px, 0.9fr) minmax(116px, 0.7fr) 80px minmax(112px, 0.8fr) 108px 96px;
 }
 
 .pending-row {
@@ -287,6 +290,12 @@ th {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pending-row strong,
+.pending-row .muted,
+td {
+  overflow-wrap: anywhere;
 }
 
 .empty-state {
@@ -328,6 +337,15 @@ th {
   padding: 0;
 }
 
+@media (max-width: 980px) {
+  .product-row,
+  .user-row,
+  .pending-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}
+
 @media (max-width: 760px) {
   .topbar {
     align-items: flex-start;
@@ -335,16 +353,7 @@ th {
   }
 
   .grid.two,
-  .form-grid,
-  .product-row,
-  .user-row,
-  .pending-row {
+  .form-grid {
     grid-template-columns: 1fr;
-  }
-
-  .product-row,
-  .user-row,
-  .pending-row {
-    align-items: stretch;
   }
 }
