@@ -58,6 +58,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -432,6 +433,7 @@ fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
                     }
                 }
             }
+            CopyrightFooter()
         }
     }
 }
@@ -511,6 +513,8 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
         if (success?.receiptUrl != null) {
             ReceiptQrCard(success.receiptUrl)
         }
+
+        CopyrightFooter()
     }
 }
 
@@ -1098,6 +1102,19 @@ fun ReceiptQrCard(receiptUrl: String) {
             }
         }
     }
+}
+
+@Composable
+fun CopyrightFooter(modifier: Modifier = Modifier) {
+    Text(
+        text = "Version ${BuildConfig.VERSION_NAME} - Copyright Erik Schauer, do1ffe@darc.de",
+        color = ClubMuted,
+        style = MaterialTheme.typography.bodySmall,
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+    )
 }
 
 @Composable

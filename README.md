@@ -2,6 +2,8 @@
 
 Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für eine einfache Getränke-Kasse.
 
+Copyright Erik Schauer, do1ffe@darc.de
+
 ## Voraussetzungen
 
 ### Allgemein
@@ -49,6 +51,8 @@ cd android
 ./gradlew :app:assembleDebug      # Debug APK
 ./gradlew :app:assembleRelease    # Release (unsigned, falls keine Signatur konfiguriert)
 ```
+Vor jedem signierten APK-Build `versionCode` und `versionName` in `android/app/build.gradle.kts` erhoehen.
+
 Falls der Checkout in einem OneDrive-Ordner liegt und Gradle über ReparsePoint-/Dateisperren stolpert, kannst du Build-Artefakte lokal auslagern:
 ```bash
 ./gradlew :app:assembleDebug -PCLUB_PAYMENT_BUILD_DIR="$LOCALAPPDATA/CodexTools/club-payment-gradle-build"
@@ -66,6 +70,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 ### Artefakte
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Release APK: `android/app/build/outputs/apk/release/app-release.apk`
+- Signierte PR-APK: `artifacts/club-payment-1.0.1-release-signed.apk`
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit
