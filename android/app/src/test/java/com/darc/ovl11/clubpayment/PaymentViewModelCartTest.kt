@@ -35,10 +35,17 @@ class PaymentViewModelCartTest {
     }
 
     @Test
+    fun `generateQrCodePixels erstellt quittungs qr code`() {
+        val pixels = generateQrCodePixels("https://pay.stripe.com/receipts/test", size = 128)
+
+        assertEquals(128 * 128, pixels?.size)
+    }
+
+    @Test
     fun `isPayButtonEnabled ist nur bei positivem betrag und ohne laufende zahlung aktiv`() {
         assertFalse(isPayButtonEnabled(0, PaymentStatus.Idle))
         assertTrue(isPayButtonEnabled(100, PaymentStatus.Idle))
-        assertFalse(isPayButtonEnabled(100, PaymentStatus.ConnectingReader))
+        assertFalse(isPayButtonEnabled(100, PaymentStatus.ActivatingPhoneNfc))
         assertFalse(isPayButtonEnabled(100, PaymentStatus.Processing))
         assertTrue(isPayButtonEnabled(100, PaymentStatus.Error("Fehler")))
     }

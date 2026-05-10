@@ -90,7 +90,7 @@ def test_create_payment_intent_success(client, monkeypatch):
         assert kwargs["amount"] == 500
         assert kwargs["currency"] == "eur"
         assert kwargs["metadata"]["item"] == "Cola"
-        assert kwargs["metadata"]["kassierer"] == "Admin Nutzer"
+        assert kwargs["metadata"]["kassierer"] == "admin"
         assert kwargs["metadata"]["user_id"] == "1"
         assert kwargs["metadata"]["role"] == "admin"
         assert kwargs["metadata"]["device"] == "device1"
@@ -141,19 +141,21 @@ def test_admin_user_flow(client):
     create_response = test_client.post(
         "/admin/users",
         json={
-            "name": "Kassierer 1",
             "role": "kassierer",
             "username": "kassierer1",
             "password": "passwort-1",
+            "api_token": "client-supplied-token",
         },
         headers={"Authorization": "Bearer admin-token"},
     )
     assert create_response.status_code == 201
     created = create_response.get_json()
-    assert created["name"] == "Kassierer 1"
+    assert created["name"] == "kassierer1"
+    assert created["username"] == "kassierer1"
     assert created["role"] == "kassierer"
     assert created["active"] is True
     assert created["api_token"]
+    assert created["api_token"] != "client-supplied-token"
 
     list_response = test_client.get(
         "/admin/users",
@@ -161,7 +163,7 @@ def test_admin_user_flow(client):
     )
     assert list_response.status_code == 200
     users = list_response.get_json()["users"]
-    assert any(user["name"] == "Kassierer 1" for user in users)
+    assert any(user["username"] == "kassierer1" for user in users)
 
     patch_response = test_client.patch(
         f"/admin/users/{created['id']}",
@@ -178,7 +180,6 @@ def test_admin_device_flow(client):
     create_response = test_client.post(
         "/admin/users",
         json={
-            "name": "Kassierer 2",
             "role": "kassierer",
             "username": "kassierer2",
             "password": "passwort-2",
@@ -210,7 +211,7 @@ def test_create_user_requires_credentials(client):
 
     response = test_client.post(
         "/admin/users",
-        json={"name": "Ohne Login", "role": "kassierer"},
+        json={"role": "kassierer"},
         headers={"Authorization": "Bearer admin-token"},
     )
 
@@ -227,7 +228,7 @@ def test_login_success(client):
     )
 
     assert response.status_code == 200
-    assert response.get_json() == {"token": "admin-token", "display_name": "Admin Nutzer"}
+    assert response.get_json() == {"token": "admin-token", "display_name": "admin"}
 
 
 def test_login_invalid_password(client):
@@ -330,7 +331,6 @@ def test_active_products_for_authenticated_user(client):
     create_user_response = test_client.post(
         "/admin/users",
         json={
-            "name": "Kasse",
             "role": "kassierer",
             "username": "kasse-user",
             "password": "passwort-kasse",
@@ -442,7 +442,7 @@ def test_admin_web_login_and_users_page(client):
     )
     assert login_response.status_code == 200
     assert "Nutzerverwaltung" in login_response.get_data(as_text=True)
-    assert "Admin Nutzer" in login_response.get_data(as_text=True)
+    assert "admin" in login_response.get_data(as_text=True)
 
 
 def test_admin_web_user_validation(client):
@@ -456,7 +456,6 @@ def test_admin_web_user_validation(client):
     response = test_client.post(
         "/admin/web/users",
         data={
-            "name": "Test Nutzer",
             "role": "kassierer",
             "username": "web-user-1",
             "password": "",
@@ -467,7 +466,7 @@ def test_admin_web_user_validation(client):
     assert "password ist erforderlich" in response.get_data(as_text=True)
 
 
-def test_admin_web_create_user_success_with_device(client):
+def test_admin_web_create_user_success_uses_credentials_only(client):
     test_client, app_module = client
     login_response = test_client.post(
         "/admin/web/login",
@@ -478,7 +477,6 @@ def test_admin_web_create_user_success_with_device(client):
     create_response = test_client.post(
         "/admin/web/users",
         data={
-            "name": "Web Kassierer",
             "role": "kassierer",
             "username": "web-kassierer",
             "password": "web-passwort",
@@ -492,7 +490,7 @@ def test_admin_web_create_user_success_with_device(client):
     store = app_module.get_user_store()
     user = store.get_by_username("web-kassierer")
     assert user is not None
-    assert user.name == "Web Kassierer"
+    assert user.name == "web-kassierer"
     assert user.role == app_module.Role.KASSIERER
     assert user.active is True
     assert user.password_hash
@@ -500,8 +498,7 @@ def test_admin_web_create_user_success_with_device(client):
 
     registry = app_module.get_device_registry()
     assignment = registry.get_device("web-kasse-1")
-    assert assignment is not None
-    assert assignment.user_id == user.id
+    assert assignment is None
 
 
 def test_admin_web_assign_device_to_existing_user(client):

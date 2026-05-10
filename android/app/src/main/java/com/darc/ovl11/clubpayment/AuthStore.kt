@@ -15,10 +15,16 @@ data class AuthData(
     val userName: String,
 )
 
+data class RememberedCredentials(
+    val userName: String,
+    val password: String,
+)
+
 class AuthStore(private val context: Context) {
     private val tokenKey = stringPreferencesKey("auth_token")
     private val userKey = stringPreferencesKey("auth_user")
     private val rememberedUserKey = stringPreferencesKey("remembered_user_name")
+    private val rememberedPasswordKey = stringPreferencesKey("remembered_password")
 
     val authData: Flow<AuthData?> = context.authDataStore.data.map { prefs ->
         val token = prefs[tokenKey]
@@ -30,8 +36,14 @@ class AuthStore(private val context: Context) {
         }
     }
 
-    val rememberedUserName: Flow<String?> = context.authDataStore.data.map { prefs ->
-        prefs[rememberedUserKey]?.takeIf { it.isNotBlank() }
+    val rememberedCredentials: Flow<RememberedCredentials?> = context.authDataStore.data.map { prefs ->
+        val userName = prefs[rememberedUserKey]
+        val password = prefs[rememberedPasswordKey]
+        if (userName.isNullOrBlank() || password.isNullOrBlank()) {
+            null
+        } else {
+            RememberedCredentials(userName = userName, password = password)
+        }
     }
 
     suspend fun saveAuth(token: String, userName: String) {
@@ -41,15 +53,17 @@ class AuthStore(private val context: Context) {
         }
     }
 
-    suspend fun saveRememberedUserName(userName: String) {
+    suspend fun saveRememberedCredentials(userName: String, password: String) {
         context.authDataStore.edit { prefs ->
             prefs[rememberedUserKey] = userName
+            prefs[rememberedPasswordKey] = password
         }
     }
 
     suspend fun clearRememberedCredentials() {
         context.authDataStore.edit { prefs ->
             prefs.remove(rememberedUserKey)
+            prefs.remove(rememberedPasswordKey)
         }
     }
 
@@ -57,7 +71,6 @@ class AuthStore(private val context: Context) {
         context.authDataStore.edit { prefs ->
             prefs.remove(tokenKey)
             prefs.remove(userKey)
-            prefs.remove(rememberedUserKey)
         }
     }
 
@@ -69,7 +82,7 @@ class AuthStore(private val context: Context) {
         return context.authDataStore.data.map { prefs -> prefs[userKey] }.first()
     }
 
-    suspend fun currentRememberedUserName(): String? {
-        return context.authDataStore.data.map { prefs -> prefs[rememberedUserKey] }.first()
+    suspend fun currentRememberedCredentials(): RememberedCredentials? {
+        return rememberedCredentials.first()
     }
 }

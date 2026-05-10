@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Club Payment</title>
+  <rect width="64" height="64" rx="16" fill="#0d5c46"/>
+  <path fill="#f8faf7" d="M16 20c0-2.2 1.8-4 4-4h24c2.2 0 4 1.8 4 4v24c0 2.2-1.8 4-4 4H20c-2.2 0-4-1.8-4-4V20z"/>
+  <path fill="#0d5c46" d="M21 25h22v6H21v-6zm0 11h12v6H21v-6z"/>
+  <path fill="#f1b642" d="M42 33c4.4 0 8 3.6 8 8h-4c0-2.2-1.8-4-4-4v-4zm0-8c8.8 0 16 7.2 16 16h-4c0-6.6-5.4-12-12-12v-4z"/>
+</svg>

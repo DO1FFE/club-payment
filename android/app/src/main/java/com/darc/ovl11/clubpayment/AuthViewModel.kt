@@ -22,7 +22,7 @@ class AuthViewModel(
     val authState: StateFlow<AuthData?> = authStore.authData
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    val rememberedUserName: StateFlow<String?> = authStore.rememberedUserName
+    val rememberedCredentials: StateFlow<RememberedCredentials?> = authStore.rememberedCredentials
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _loginStatus = MutableStateFlow<LoginStatus>(LoginStatus.Idle)
@@ -35,7 +35,7 @@ class AuthViewModel(
                 val response = backendService.login(LoginRequest(username = userName, password = password))
                 authStore.saveAuth(response.token, response.displayName)
                 if (rememberCredentials) {
-                    authStore.saveRememberedUserName(userName)
+                    authStore.saveRememberedCredentials(userName, password)
                 } else {
                     authStore.clearRememberedCredentials()
                 }

@@ -20,7 +20,7 @@ class AuthViewModelTest {
         val backendService = mock<BackendService>()
         val gespeicherteAuth = AuthData(token = "token-123", userName = "Max Mustermann")
         whenever(authStore.authData).thenReturn(MutableStateFlow(gespeicherteAuth))
-        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow(null))
+        whenever(authStore.rememberedCredentials).thenReturn(MutableStateFlow(null))
 
         val viewModel = AuthViewModel(authStore, backendService)
         advanceUntilIdle()
@@ -29,11 +29,11 @@ class AuthViewModelTest {
     }
 
     @Test
-    fun `login mit merken speichert token und benutzernamen`() = runTest {
+    fun `login mit merken speichert token und zugangsdaten`() = runTest {
         val authStore = mock<AuthStore>()
         val backendService = mock<BackendService>()
         whenever(authStore.authData).thenReturn(MutableStateFlow(null))
-        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow(null))
+        whenever(authStore.rememberedCredentials).thenReturn(MutableStateFlow(null))
         whenever(backendService.login(LoginRequest("max", "geheim")))
             .thenReturn(LoginResponse(token = "token-xyz", displayName = "Max"))
         val viewModel = AuthViewModel(authStore, backendService)
@@ -42,15 +42,16 @@ class AuthViewModelTest {
         advanceUntilIdle()
 
         verify(authStore).saveAuth("token-xyz", "Max")
-        verify(authStore).saveRememberedUserName("max")
+        verify(authStore).saveRememberedCredentials("max", "geheim")
     }
 
     @Test
-    fun `logout loescht alle gespeicherten anmeldedaten`() = runTest {
+    fun `logout loescht den aktiven token`() = runTest {
         val authStore = mock<AuthStore>()
         val backendService = mock<BackendService>()
         whenever(authStore.authData).thenReturn(MutableStateFlow(null))
-        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow("Max"))
+        whenever(authStore.rememberedCredentials)
+            .thenReturn(MutableStateFlow(RememberedCredentials("Max", "geheim")))
         val viewModel = AuthViewModel(authStore, backendService)
 
         viewModel.logout()
@@ -60,11 +61,12 @@ class AuthViewModelTest {
     }
 
     @Test
-    fun `login ohne merken entfernt gemerkten benutzernamen`() = runTest {
+    fun `login ohne merken entfernt gemerkte zugangsdaten`() = runTest {
         val authStore = mock<AuthStore>()
         val backendService = mock<BackendService>()
         whenever(authStore.authData).thenReturn(MutableStateFlow(null))
-        whenever(authStore.rememberedUserName).thenReturn(MutableStateFlow("Max"))
+        whenever(authStore.rememberedCredentials)
+            .thenReturn(MutableStateFlow(RememberedCredentials("Max", "geheim")))
         whenever(backendService.login(LoginRequest("max", "geheim")))
             .thenReturn(LoginResponse(token = "token-xyz", displayName = "Max"))
         val viewModel = AuthViewModel(authStore, backendService)
