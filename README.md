@@ -32,6 +32,11 @@ cp .env.example .env  # STRIPE_SECRET_KEY usw. eintragen
 python app.py  # läuft auf Port 4040
 ```
 
+## Landingpage und APK-Download
+- `/` zeigt eine deutsche Landingpage mit Link zur aktuellen Android-APK.
+- `/apk/latest` liefert automatisch die neueste Datei aus `artifacts/club-payment-*-release-signed.apk` als Download aus.
+- Optional kann `APK_DOWNLOAD_DIR` gesetzt werden, wenn die APKs auf dem Server in einem anderen Ordner liegen.
+
 ## Android-App konfigurieren
 1. `android/gradle.properties` enthält Platzhalter:
    - `BACKEND_BASE_URL=https://payment.lima11.de/`
@@ -78,6 +83,11 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 - R8/ProGuard ist für Release aktiviert; Stripe Terminal-Klassen werden per Rule erhalten.
 - Tap to Pay Flow ist nativ ueber das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present, NFC direkt am Android-Handy).
 - Auth-Persistenz-Entscheidung (Android): Bei aktivierter Option `Zugangsdaten merken` werden Benutzername und Passwort lokal in der App gespeichert und beim naechsten Login vorausgefuellt. Beim Abmelden bleibt diese Vorbelegung erhalten; Login ohne aktivierte Option loescht sie.
+
+## Stripe-Sprache fuer Belege
+- Stripe kann Belege, E-Mails und PDFs auf Deutsch lokalisieren, wenn im Stripe-Dashboard Deutsch als Sprache fuer Kunden-E-Mails/Belege gesetzt ist oder ein Stripe-Customer mit `preferred_locales=["de"]` verwendet wird.
+- Die App nutzt fuer Kartenzahlungen anonyme Terminal-PaymentIntents. Ohne Kundendatensatz oder E-Mail kann der von Stripe gehostete `receipt_url` nicht sicher pro Zahlung auf Deutsch erzwungen werden; hier greifen Stripe-Dashboard- und Browser-/Account-Einstellungen.
+- Wenn eine garantiert deutsche, eigene Quittungsseite benoetigt wird, sollte der QR-Code auf eine serverseitig erzeugte Club-Kasse-Quittung zeigen, die die benoetigten Stripe-Terminal-Belegdaten aus der API rendert.
 
 ## Backend-API aus der App
 - `GET /terminal/config` → holt mit `Authorization: Bearer <token>` die Stripe Terminal Location fuer Tap to Pay
