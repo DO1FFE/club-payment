@@ -1,10 +1,14 @@
 package com.darc.ovl11.clubpayment
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.nfc.NfcAdapter
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -50,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -73,6 +78,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.delay
@@ -97,6 +105,12 @@ private val ClubMuted = Color(0xFF60716A)
 private val ClubBorder = Color(0xFFD9E1DC)
 private val ClubDanger = Color(0xFFB42318)
 private const val LocationPermissionMessage = "Standortberechtigung ist fuer Stripe Tap to Pay erforderlich. Bitte erlauben und erneut bezahlen."
+
+enum class NfcAvailability {
+    Enabled,
+    Disabled,
+    Unavailable,
+}
 
 data class CustomCartItem(
     val id: Int,
@@ -313,15 +327,33 @@ fun ClubPaymentTheme(content: @Composable () -> Unit) {
 
 @Composable
 fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val authState by authViewModel.authState.collectAsState()
     val deviceName = viewModel.deviceName
+    var nfcAvailability by remember { mutableStateOf(readNfcAvailability(context)) }
+
+    DisposableEffect(context, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                nfcAvailability = readNfcAvailability(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = ClubBackground
     ) {
         if (authState == null) {
-            LoginScreen(authViewModel, deviceName)
+            LoginScreen(
+                authViewModel = authViewModel,
+                deviceName = deviceName,
+                nfcAvailability = nfcAvailability,
+                onOpenNfcSettings = { openNfcSettings(context) }
+            )
         } else {
             LaunchedEffect(authState?.token) {
                 viewModel.loadProducts()
@@ -330,6 +362,8 @@ fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
                 viewModel = viewModel,
                 userName = authState?.userName.orEmpty(),
                 deviceName = deviceName,
+                nfcAvailability = nfcAvailability,
+                onOpenNfcSettings = { openNfcSettings(context) },
                 onLogout = { authViewModel.logout() }
             )
         }
@@ -337,7 +371,12 @@ fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
 }
 
 @Composable
-fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
+fun LoginScreen(
+    authViewModel: AuthViewModel,
+    deviceName: String,
+    nfcAvailability: NfcAvailability,
+    onOpenNfcSettings: () -> Unit,
+) {
     var userName by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var rememberCredentials by remember { mutableStateOf(false) }
@@ -373,6 +412,10 @@ fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
                 title = "Club Kasse",
                 subtitle = "DARC OV L11",
                 detail = "Kartenzahlung per NFC"
+            )
+            NfcStatusPanel(
+                nfcAvailability = nfcAvailability,
+                onOpenNfcSettings = onOpenNfcSettings
             )
 
             Card(
@@ -471,7 +514,14 @@ fun LoginScreen(authViewModel: AuthViewModel, deviceName: String) {
 }
 
 @Composable
-fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: String, onLogout: () -> Unit) {
+fun PaymentScreen(
+    viewModel: PaymentViewModel,
+    userName: String,
+    deviceName: String,
+    nfcAvailability: NfcAvailability,
+    onOpenNfcSettings: () -> Unit,
+    onLogout: () -> Unit,
+) {
     val context = LocalContext.current
     val status by viewModel.status.collectAsState()
     val products by viewModel.products.collectAsState()
@@ -515,6 +565,11 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
             onLogout = onLogout
         )
 
+        NfcStatusPanel(
+            nfcAvailability = nfcAvailability,
+            onOpenNfcSettings = onOpenNfcSettings
+        )
+
         productsError?.let { errorText ->
             ErrorPanel("Produkte konnten nicht geladen werden: $errorText")
         }
@@ -551,7 +606,7 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
                     locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
                 }
             },
-            enabled = isPayButtonEnabled(totalAmountCents, status),
+            enabled = isPayButtonEnabled(totalAmountCents, status, nfcAvailability),
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 54.dp),
@@ -1379,6 +1434,55 @@ fun ErrorPanel(message: String) {
 }
 
 @Composable
+fun NfcStatusPanel(nfcAvailability: NfcAvailability, onOpenNfcSettings: () -> Unit) {
+    if (nfcAvailability == NfcAvailability.Enabled) {
+        return
+    }
+    val message = when (nfcAvailability) {
+        NfcAvailability.Disabled -> "NFC ist ausgeschaltet. Bitte NFC aktivieren, bevor Zahlungen angenommen werden."
+        NfcAvailability.Unavailable -> "Dieses Gerät unterstützt kein NFC und kann keine Tap-to-Pay-Zahlungen annehmen."
+        NfcAvailability.Enabled -> ""
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = ClubGold.copy(alpha = 0.14f),
+        contentColor = ClubInk,
+        border = BorderStroke(1.dp, ClubGold.copy(alpha = 0.45f))
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_nfc),
+                    contentDescription = null,
+                    tint = ClubGreen,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (nfcAvailability == NfcAvailability.Disabled) {
+                OutlinedButton(
+                    onClick = onOpenNfcSettings,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("NFC-Einstellungen öffnen")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ErrorText(message: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1544,13 +1648,17 @@ fun parseEuroAmountToCents(value: String): Int? {
     }
 }
 
-fun isPayButtonEnabled(totalAmountCents: Int, status: PaymentStatus): Boolean {
+fun isPayButtonEnabled(
+    totalAmountCents: Int,
+    status: PaymentStatus,
+    nfcAvailability: NfcAvailability = NfcAvailability.Enabled,
+): Boolean {
     val paymentInProgress = status is PaymentStatus.CreatingIntent ||
         status is PaymentStatus.ActivatingPhoneNfc ||
         status is PaymentStatus.WaitingForTap ||
         status is PaymentStatus.Processing ||
         status is PaymentStatus.FetchingReceipt
-    return totalAmountCents > 0 && !paymentInProgress
+    return totalAmountCents > 0 && !paymentInProgress && nfcAvailability == NfcAvailability.Enabled
 }
 
 fun shouldShowPaymentResultDialog(status: PaymentStatus): Boolean {
@@ -1562,6 +1670,25 @@ fun hasStripeLocationPermission(context: Context): Boolean {
         context,
         Manifest.permission.ACCESS_FINE_LOCATION
     ) == PackageManager.PERMISSION_GRANTED
+}
+
+fun readNfcAvailability(context: Context): NfcAvailability {
+    val adapter = NfcAdapter.getDefaultAdapter(context)
+    return when {
+        adapter == null -> NfcAvailability.Unavailable
+        adapter.isEnabled -> NfcAvailability.Enabled
+        else -> NfcAvailability.Disabled
+    }
+}
+
+fun openNfcSettings(context: Context) {
+    val nfcIntent = Intent(Settings.ACTION_NFC_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(nfcIntent)
+    } catch (error: ActivityNotFoundException) {
+        val wirelessIntent = Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(wirelessIntent)
+    }
 }
 
 fun formatCurrency(amountCents: Int): String {
