@@ -45,7 +45,7 @@ def test_landing_page_links_latest_apk(client, monkeypatch, tmp_path):
     test_client, app_module = client
     monkeypatch.setattr(app_module, "APK_DOWNLOAD_DIR", tmp_path)
     (tmp_path / "club-payment-1.0.10-release-signed.apk").write_bytes(b"old")
-    (tmp_path / "club-payment-1.0.11-release-signed.apk").write_bytes(b"new")
+    (tmp_path / "club-payment-1.0.12-release-signed.apk").write_bytes(b"new")
 
     response = test_client.get("/")
 
@@ -53,8 +53,8 @@ def test_landing_page_links_latest_apk(client, monkeypatch, tmp_path):
     page = response.get_data(as_text=True)
     assert "Club Kasse" in page
     assert "Android-App herunterladen" in page
-    assert "Version 1.0.11" in page
-    assert "Version 1.0.11 - &copy;" in page
+    assert "Version 1.0.12" in page
+    assert "Version 1.0.12 - &copy;" in page
     assert "/apk/latest" in page
 
 
@@ -62,14 +62,14 @@ def test_latest_apk_downloads_newest_file(client, monkeypatch, tmp_path):
     test_client, app_module = client
     monkeypatch.setattr(app_module, "APK_DOWNLOAD_DIR", tmp_path)
     (tmp_path / "club-payment-1.0.10-release-signed.apk").write_bytes(b"old")
-    (tmp_path / "club-payment-1.0.11-release-signed.apk").write_bytes(b"new")
+    (tmp_path / "club-payment-1.0.12-release-signed.apk").write_bytes(b"new")
 
     response = test_client.get("/apk/latest")
 
     assert response.status_code == 200
     assert response.data == b"new"
     assert response.mimetype == "application/vnd.android.package-archive"
-    assert "club-payment-1.0.11-release-signed.apk" in response.headers["Content-Disposition"]
+    assert "club-payment-1.0.12-release-signed.apk" in response.headers["Content-Disposition"]
 
 
 def test_latest_apk_returns_404_when_missing(client, monkeypatch, tmp_path):
