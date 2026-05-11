@@ -111,6 +111,8 @@ class PaymentViewModelCartTest {
         assertFalse(isPayButtonEnabled(100, PaymentStatus.ActivatingPhoneNfc))
         assertFalse(isPayButtonEnabled(100, PaymentStatus.Processing))
         assertTrue(isPayButtonEnabled(100, PaymentStatus.Error("Fehler")))
+        assertFalse(isPayButtonEnabled(100, PaymentStatus.Idle, NfcAvailability.Disabled))
+        assertFalse(isPayButtonEnabled(100, PaymentStatus.Idle, NfcAvailability.Unavailable))
     }
 
     @Test
