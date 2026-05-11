@@ -740,6 +740,180 @@ def test_admin_web_login_and_users_page(client):
     assert "admin" in login_response.get_data(as_text=True)
 
 
+def test_cashier_web_login_redirects_to_payments_view_only(client, monkeypatch):
+    test_client, app_module = client
+    store = app_module.get_user_store()
+    store.create_user(
+        name="cashier-web",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="cashier-web",
+        password_hash=store.hash_password("cashier-passwort"),
+    )
+
+    login_response = test_client.post(
+        "/admin/web/login",
+        data={"username": "cashier-web", "password": "cashier-passwort"},
+    )
+    assert login_response.status_code == 302
+    assert login_response.headers["Location"].endswith("/admin/web/payments")
+
+    class DummyCharge:
+        id = "ch_cashier"
+        amount = 150
+        amount_refunded = 0
+        currency = "eur"
+        refunded = False
+        receipt_url = "https://pay.stripe.com/receipts/cashier"
+
+    class DummyIntent:
+        id = "pi_cashier"
+        created = 1710000000
+        status = "succeeded"
+        amount = 150
+        currency = "eur"
+        latest_charge = DummyCharge()
+        metadata = {"club": "DARC e.V. OV L11", "item": "Cola"}
+
+    class DummyIntentList:
+        data = [DummyIntent()]
+
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "list", staticmethod(lambda **kwargs: DummyIntentList()))
+
+    response = test_client.get("/admin/web/payments")
+
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Zahlungen" in page
+    assert "Nutzer &amp; Ger" not in page
+    assert "Produkte" not in page
+    assert "Konto" in page
+    assert "nur Ansicht" in page
+    assert "Erstatten" not in page
+
+
+def test_cashier_web_cannot_open_admin_management_pages(client):
+    test_client, app_module = client
+    store = app_module.get_user_store()
+    store.create_user(
+        name="cashier-limited",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="cashier-limited",
+        password_hash=store.hash_password("cashier-passwort"),
+    )
+    test_client.post(
+        "/admin/web/login",
+        data={"username": "cashier-limited", "password": "cashier-passwort"},
+    )
+
+    users_response = test_client.get("/admin/web/users")
+    products_response = test_client.get("/admin/web/products")
+    devices_response = test_client.post("/admin/web/devices", data={"device_id": "x", "user_id": "1"})
+
+    assert users_response.status_code == 302
+    assert users_response.headers["Location"].endswith("/admin/web/payments")
+    assert products_response.status_code == 302
+    assert products_response.headers["Location"].endswith("/admin/web/payments")
+    assert devices_response.status_code == 302
+    assert devices_response.headers["Location"].endswith("/admin/web/payments")
+
+
+def test_cashier_web_cannot_refund_payments(client, monkeypatch):
+    test_client, app_module = client
+    store = app_module.get_user_store()
+    store.create_user(
+        name="cashier-no-refund",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="cashier-no-refund",
+        password_hash=store.hash_password("cashier-passwort"),
+    )
+    test_client.post(
+        "/admin/web/login",
+        data={"username": "cashier-no-refund", "password": "cashier-passwort"},
+    )
+
+    class DummyIntentList:
+        data = []
+
+    called = {"refund": False}
+
+    def fake_refund_create(**kwargs):
+        called["refund"] = True
+
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "list", staticmethod(lambda **kwargs: DummyIntentList()))
+    monkeypatch.setattr(app_module.stripe.Refund, "create", staticmethod(fake_refund_create))
+
+    response = test_client.post(
+        "/admin/web/payments",
+        data={"action": "refund", "payment_intent_id": "pi_cashier", "refund_amount": "1,50"},
+    )
+
+    assert response.status_code == 200
+    assert "Nur Administratoren duerfen Rueckerstattungen ausloesen" in response.get_data(as_text=True)
+    assert called["refund"] is False
+
+
+def test_web_account_password_change_for_cashier(client):
+    test_client, app_module = client
+    store = app_module.get_user_store()
+    cashier = store.create_user(
+        name="cashier-password",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="cashier-password",
+        password_hash=store.hash_password("old-passwort"),
+    )
+    test_client.post(
+        "/admin/web/login",
+        data={"username": "cashier-password", "password": "old-passwort"},
+    )
+
+    response = test_client.post(
+        "/admin/web/account",
+        data={
+            "current_password": "old-passwort",
+            "new_password": "new-passwort",
+            "confirm_password": "new-passwort",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Passwort wurde aktualisiert" in response.get_data(as_text=True)
+    assert store.authenticate("cashier-password", "old-passwort") is None
+    assert store.authenticate("cashier-password", "new-passwort").id == cashier.id
+
+
+def test_web_account_rejects_wrong_current_password(client):
+    test_client, app_module = client
+    store = app_module.get_user_store()
+    store.create_user(
+        name="cashier-wrong-password",
+        role=app_module.Role.KASSIERER,
+        active=True,
+        username="cashier-wrong-password",
+        password_hash=store.hash_password("old-passwort"),
+    )
+    test_client.post(
+        "/admin/web/login",
+        data={"username": "cashier-wrong-password", "password": "old-passwort"},
+    )
+
+    response = test_client.post(
+        "/admin/web/account",
+        data={
+            "current_password": "falsch",
+            "new_password": "new-passwort",
+            "confirm_password": "new-passwort",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Aktuelles Passwort ist falsch" in response.get_data(as_text=True)
+    assert store.authenticate("cashier-wrong-password", "old-passwort") is not None
+
+
 def test_admin_web_user_validation(client):
     test_client, _ = client
     login_response = test_client.post(

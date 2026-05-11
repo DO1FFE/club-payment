@@ -37,6 +37,11 @@ python app.py  # läuft auf Port 4040
 - `/apk/latest` liefert automatisch die neueste Datei aus `artifacts/club-payment-*-release-signed.apk` als Download aus.
 - Optional kann `APK_DOWNLOAD_DIR` gesetzt werden, wenn die APKs auf dem Server in einem anderen Ordner liegen.
 
+## Web-Bereich
+- Admins koennen Nutzer, Geraete, Produkte und Zahlungen verwalten.
+- Kassierer koennen sich im Web anmelden, Zahlungen/Belege ansehen und ihr eigenes Passwort aendern.
+- Kassierer haben keinen Zugriff auf Nutzer-, Geraete- oder Produktverwaltung und koennen keine Rueckerstattungen ausloesen.
+
 ## Android-App konfigurieren
 1. `android/gradle.properties` enthält Platzhalter:
    - `BACKEND_BASE_URL=https://payment.lima11.de/`

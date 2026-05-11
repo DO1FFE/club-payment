@@ -368,6 +368,10 @@ td {
   min-width: 0;
 }
 
+.account-panel {
+  max-width: 560px;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
