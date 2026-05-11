@@ -84,6 +84,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.text.NumberFormat
+import java.time.Year
 import java.util.Locale
 
 private val ClubGreen = Color(0xFF0D5C46)
@@ -1268,8 +1269,9 @@ fun ReceiptQrCard(receiptUrl: String) {
 
 @Composable
 fun CopyrightFooter(modifier: Modifier = Modifier) {
+    val currentYear = remember { Year.now().value }
     Text(
-        text = "Version ${BuildConfig.VERSION_NAME} - Copyright Erik Schauer, do1ffe@darc.de",
+        text = "Version ${BuildConfig.VERSION_NAME} - \u00A9 $currentYear Erik Schauer, do1ffe@darc.de",
         color = ClubMuted,
         style = MaterialTheme.typography.bodySmall,
         textAlign = TextAlign.Center,

@@ -54,6 +54,15 @@ STRIPE_LOCATION_ADDRESS = {
 }
 APK_DOWNLOAD_DIR = Path(os.getenv("APK_DOWNLOAD_DIR", Path(__file__).resolve().parents[1] / "artifacts"))
 APK_FILENAME_PATTERN = re.compile(r"club-payment-(?P<version>\d+(?:\.\d+)*)-release-signed\.apk$")
+APP_VERSION = os.getenv("APP_VERSION", "1.0.9")
+
+
+@app.context_processor
+def _template_context() -> dict:
+    return {
+        "app_version": APP_VERSION,
+        "current_year": datetime.now(timezone.utc).year,
+    }
 
 
 def _get_web_user_from_session():
