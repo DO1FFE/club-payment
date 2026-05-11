@@ -58,34 +58,34 @@
             <tbody>
               {% for payment in payments %}
               <tr>
-                <td>
+                <td data-label="Zeitpunkt">
                   <strong>{{ payment.created_label }}</strong>
                   <span class="muted payment-id">{{ payment.id }}</span>
                 </td>
-                <td>{{ payment.item }}</td>
-                <td>{{ payment.cashier }}</td>
-                <td>{{ payment.device }}</td>
-                <td>{{ format_price_euros(payment.amount_cents) }} {{ payment.currency }}</td>
-                <td>
+                <td data-label="Artikel">{{ payment.item }}</td>
+                <td data-label="Kassierer">{{ payment.cashier }}</td>
+                <td data-label="Geraet">{{ payment.device }}</td>
+                <td data-label="Betrag">{{ format_price_euros(payment.amount_cents) }} {{ payment.currency }}</td>
+                <td data-label="Erstattet">
                   {{ format_price_euros(payment.amount_refunded_cents) }} {{ payment.currency }}
                   {% if payment.refunded %}
                   <span class="badge">voll erstattet</span>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="Auszahlung">
                   <strong>{{ payment.payout_label }}</strong>
                   {% if payment.payout_detail %}
                   <span class="muted payment-id">{{ payment.payout_detail }}</span>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="Beleg">
                   {% if payment.receipt_url %}
                   <a class="secondary-link" href="{{ payment.receipt_url }}" target="_blank" rel="noopener">Beleg</a>
                   {% else %}
                   <span class="muted">-</span>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="Rueckerstattung">
                   {% if payment.refundable_cents > 0 %}
                   <form class="refund-form" method="post" action="{{ url_for('admin_web_payments') }}">
                     <input type="hidden" name="action" value="refund">

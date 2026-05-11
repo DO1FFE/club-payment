@@ -243,8 +243,7 @@ button.danger:hover {
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow: auto hidden;
-  overscroll-behavior-inline: contain;
+  overflow-x: visible;
 }
 
 table {
@@ -326,7 +325,14 @@ td {
 }
 
 .payments-table {
-  min-width: 1120px;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.payments-table th,
+.payments-table td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .payment-id {
@@ -356,10 +362,10 @@ td {
 
 .refund-form {
   display: grid;
-  grid-template-columns: minmax(92px, 1fr) minmax(96px, max-content);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   align-items: center;
-  min-width: 220px;
+  min-width: 0;
 }
 
 .visually-hidden {
@@ -424,8 +430,53 @@ td {
   }
 
   .grid.two,
-  .form-grid,
-  .refund-form {
+  .form-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .payments-table {
+    border-collapse: separate;
+    border-spacing: 0 12px;
+  }
+
+  .payments-table thead {
+    display: none;
+  }
+
+  .payments-table tbody,
+  .payments-table tr,
+  .payments-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .payments-table tr {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fbfdfb;
+  }
+
+  .payments-table td {
+    display: grid;
+    grid-template-columns: minmax(92px, 0.36fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 8px 0;
+    border-bottom: 1px solid #e7eeea;
+  }
+
+  .payments-table td:last-child {
+    border-bottom: 0;
+  }
+
+  .payments-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 900;
+    text-transform: uppercase;
   }
 }
