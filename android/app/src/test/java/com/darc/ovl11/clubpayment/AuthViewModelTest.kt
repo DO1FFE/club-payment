@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -43,6 +44,30 @@ class AuthViewModelTest {
 
         verify(authStore).saveAuth("token-xyz", "Max")
         verify(authStore).saveRememberedCredentials("max", "geheim")
+    }
+
+    @Test
+    fun `login mit nicht zugeordnetem geraet speichert keinen aktiven token`() = runTest {
+        val authStore = mock<AuthStore>()
+        val backendService = mock<BackendService>()
+        whenever(authStore.authData).thenReturn(MutableStateFlow(null))
+        whenever(authStore.rememberedCredentials).thenReturn(MutableStateFlow(null))
+        whenever(backendService.login(LoginRequest("max", "geheim", "geraet-neu")))
+            .thenReturn(LoginResponse(token = "token-xyz", displayName = "Max", devicePending = true))
+        val viewModel = AuthViewModel(authStore, backendService)
+
+        viewModel.login(userName = "max", password = "geheim", rememberCredentials = true, deviceId = "geraet-neu")
+        advanceUntilIdle()
+
+        verify(authStore).clearAuth()
+        verify(authStore, never()).saveAuth("token-xyz", "Max")
+        verify(authStore).saveRememberedCredentials("max", "geheim")
+        assertEquals(
+            LoginStatus.Error(
+                "Dieses Gerät ist noch keinem Nutzer zugeordnet. Bitte im Admin-Bereich freischalten und danach erneut anmelden."
+            ),
+            viewModel.loginStatus.value
+        )
     }
 
     @Test

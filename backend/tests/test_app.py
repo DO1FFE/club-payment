@@ -54,7 +54,7 @@ def test_landing_page_links_latest_apk(client, monkeypatch, tmp_path):
     assert "Club Kasse" in page
     assert "Android-App herunterladen" in page
     assert "Version 1.0.10" in page
-    assert "Version 1.0.9 - &copy;" in page
+    assert "Version 1.0.10 - &copy;" in page
     assert "/apk/latest" in page
 
 

@@ -15,6 +15,9 @@ sealed class LoginStatus {
     data class Error(val message: String) : LoginStatus()
 }
 
+private const val DeviceNotAssignedMessage =
+    "Dieses Gerät ist noch keinem Nutzer zugeordnet. Bitte im Admin-Bereich freischalten und danach erneut anmelden."
+
 class AuthViewModel(
     private val authStore: AuthStore,
     private val backendService: BackendService,
@@ -35,6 +38,16 @@ class AuthViewModel(
                 val response = backendService.login(
                     LoginRequest(username = userName, password = password, device_id = deviceId)
                 )
+                if (response.devicePending) {
+                    authStore.clearAuth()
+                    if (rememberCredentials) {
+                        authStore.saveRememberedCredentials(userName, password)
+                    } else {
+                        authStore.clearRememberedCredentials()
+                    }
+                    _loginStatus.value = LoginStatus.Error(DeviceNotAssignedMessage)
+                    return@launch
+                }
                 authStore.saveAuth(response.token, response.displayName)
                 if (rememberCredentials) {
                     authStore.saveRememberedCredentials(userName, password)

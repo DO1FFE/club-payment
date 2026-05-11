@@ -39,6 +39,8 @@ data class LoginResponse(
     val token: String,
     @Json(name = "display_name")
     val displayName: String,
+    @Json(name = "device_pending")
+    val devicePending: Boolean = false,
 )
 
 @Serializable
