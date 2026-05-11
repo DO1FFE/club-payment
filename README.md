@@ -2,7 +2,7 @@
 
 Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für eine einfache Getränke-Kasse.
 
-Version 1.0.12 - © 2026 Erik Schauer, do1ffe@darc.de
+Version 1.0.13 - © 2026 Erik Schauer, do1ffe@darc.de
 
 ## Voraussetzungen
 
@@ -80,7 +80,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 ### Artefakte
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Release APK: `android/app/build/outputs/apk/release/app-release.apk`
-- Signierte PR-APK: `artifacts/club-payment-1.0.12-release-signed.apk`
+- Signierte PR-APK: `artifacts/club-payment-1.0.13-release-signed.apk`
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit
@@ -95,6 +95,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 - Wenn eine garantiert deutsche, eigene Quittungsseite benoetigt wird, sollte der QR-Code auf eine serverseitig erzeugte Club-Kasse-Quittung zeigen, die die benoetigten Stripe-Terminal-Belegdaten aus der API rendert.
 
 ## Backend-API aus der App
+- `GET /api/app/latest` -> prueft die neueste signierte APK fuer den Update-Hinweis in der Android-App
 - `GET /terminal/config` → holt mit `Authorization: Bearer <token>` die Stripe Terminal Location fuer Tap to Pay
 - `POST /terminal/connection_token` → holt mit `Authorization: Bearer <token>` ein Connection Token für das Terminal SDK
 - `POST /pos/create_intent` → erzeugt PaymentIntent (EUR, card_present) mit Metadaten (`club`, `item`, `kassierer`, `device`)

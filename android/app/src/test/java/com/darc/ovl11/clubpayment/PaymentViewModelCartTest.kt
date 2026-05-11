@@ -86,6 +86,23 @@ class PaymentViewModelCartTest {
     }
 
     @Test
+    fun `AppVersionResponse liest update metadaten aus backend json`() {
+        val moshi = Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+        val adapter = moshi.adapter(AppVersionResponse::class.java)
+
+        val response = adapter.fromJson(
+            """{"available":true,"version":"1.0.13","size_mb":"46,5","download_path":"/apk/latest"}"""
+        )
+
+        assertEquals(true, response?.available)
+        assertEquals("1.0.13", response?.version)
+        assertEquals("46,5", response?.sizeMb)
+        assertEquals("/apk/latest", response?.downloadPath)
+    }
+
+    @Test
     fun `ReceiptResponse liest beleg url aus backend json`() {
         val moshi = Moshi.Builder()
             .add(KotlinJsonAdapterFactory())
@@ -116,6 +133,14 @@ class PaymentViewModelCartTest {
     }
 
     @Test
+    fun `compareVersionNames erkennt neuere versionen`() {
+        assertTrue(compareVersionNames("1.0.13", "1.0.12") > 0)
+        assertEquals(0, compareVersionNames("1.0.12", "1.0.12"))
+        assertTrue(compareVersionNames("1.0.12", "1.0.13") < 0)
+        assertEquals(0, compareVersionNames("1.0", "1.0.0"))
+    }
+
+    @Test
     fun `shouldShowPaymentResultDialog reagiert nur auf erfolg und fehler`() {
         assertFalse(shouldShowPaymentResultDialog(PaymentStatus.Idle))
         assertFalse(shouldShowPaymentResultDialog(PaymentStatus.Processing))
@@ -129,5 +154,12 @@ class PaymentViewModelCartTest {
                 )
             )
         )
+    }
+
+    @Test
+    fun `canShowAppUpdateDialog erscheint nur im ruhezustand`() {
+        assertTrue(canShowAppUpdateDialog(PaymentStatus.Idle))
+        assertFalse(canShowAppUpdateDialog(PaymentStatus.Processing))
+        assertFalse(canShowAppUpdateDialog(PaymentStatus.Error("Fehler")))
     }
 }

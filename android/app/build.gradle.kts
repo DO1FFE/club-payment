@@ -16,8 +16,8 @@ android {
         applicationId = "com.darc.ovl11.clubpayment"
         minSdk = 30
         targetSdk = 34
-        versionCode = 13
-        versionName = "1.0.12"
+        versionCode = 14
+        versionName = "1.0.13"
 
         val props = gradleLocalProperties(rootDir, providers)
         val backendUrl = props.getProperty("BACKEND_BASE_URL") ?: project.findProperty("BACKEND_BASE_URL")?.toString()

@@ -28,6 +28,17 @@ data class TerminalConfigResponse(
 )
 
 @Serializable
+data class AppVersionResponse(
+    val available: Boolean,
+    val version: String? = null,
+    val filename: String? = null,
+    @Json(name = "size_mb")
+    val sizeMb: String? = null,
+    @Json(name = "download_path")
+    val downloadPath: String? = null,
+)
+
+@Serializable
 data class LoginRequest(
     val username: String,
     val password: String,
@@ -102,6 +113,9 @@ fun Throwable.backendErrorMessage(defaultMessage: String): String {
 }
 
 interface BackendService {
+    @GET("/api/app/latest")
+    suspend fun getLatestAppVersion(): AppVersionResponse
+
     @POST("/terminal/connection_token")
     suspend fun createConnectionToken(): ConnectionTokenResponse
 

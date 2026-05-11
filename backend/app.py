@@ -54,7 +54,7 @@ STRIPE_LOCATION_ADDRESS = {
 }
 APK_DOWNLOAD_DIR = Path(os.getenv("APK_DOWNLOAD_DIR", Path(__file__).resolve().parents[1] / "artifacts"))
 APK_FILENAME_PATTERN = re.compile(r"club-payment-(?P<version>\d+(?:\.\d+)*)-release-signed\.apk$")
-APP_VERSION = os.getenv("APP_VERSION", "1.0.12")
+APP_VERSION = os.getenv("APP_VERSION", "1.0.13")
 
 
 @app.context_processor
@@ -444,6 +444,20 @@ def download_latest_apk():
         download_name=apk["filename"],
         mimetype="application/vnd.android.package-archive",
     )
+
+
+@app.route("/api/app/latest")
+def latest_app_version():
+    apk = _latest_apk_info()
+    if not apk:
+        return jsonify({"available": False})
+    return jsonify({
+        "available": True,
+        "version": apk["version"],
+        "filename": apk["filename"],
+        "size_mb": apk["size_mb"],
+        "download_path": url_for("download_latest_apk"),
+    })
 
 
 @app.route("/terminal/connection_token", methods=["POST"])
