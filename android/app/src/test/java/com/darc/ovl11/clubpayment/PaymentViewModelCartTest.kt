@@ -1,5 +1,7 @@
 package com.darc.ovl11.clubpayment
 
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -69,6 +71,18 @@ class PaymentViewModelCartTest {
     fun `normalizeStripeLocationId akzeptiert null und trimmt werte`() {
         assertEquals("", normalizeStripeLocationId(null))
         assertEquals("tml_123", normalizeStripeLocationId("  tml_123  "))
+    }
+
+    @Test
+    fun `TerminalConfigResponse liest stripe location aus backend json`() {
+        val moshi = Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+        val adapter = moshi.adapter(TerminalConfigResponse::class.java)
+
+        val response = adapter.fromJson("""{"location_id":"tml_123"}""")
+
+        assertEquals("tml_123", response?.locationId)
     }
 
     @Test

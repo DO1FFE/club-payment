@@ -1,6 +1,7 @@
 # Keep Stripe Terminal models
 -keep class com.stripe.stripeterminal.** { *; }
 -keep class com.darc.ovl11.clubpayment.ConnectionTokenResponse { *; }
+-keep class com.darc.ovl11.clubpayment.TerminalConfigResponse { *; }
 -keep class com.darc.ovl11.clubpayment.LoginRequest { *; }
 -keep class com.darc.ovl11.clubpayment.LoginResponse { *; }
 -keep class com.darc.ovl11.clubpayment.PaymentIntentRequest { *; }

@@ -207,7 +207,7 @@ class TerminalManager(private val context: Context, private val backendService: 
             return buildLocationId
         }
         cachedLocationId?.takeIf { it.isNotBlank() }?.let { return it }
-        val serverLocationId = normalizeStripeLocationId(backendService.getTerminalConfig().location_id)
+        val serverLocationId = normalizeStripeLocationId(backendService.getTerminalConfig().locationId)
         if (serverLocationId.isBlank()) {
             throw IllegalStateException(MissingLocationIdMessage)
         }

@@ -23,7 +23,8 @@ data class ConnectionTokenResponse(val secret: String)
 
 @Serializable
 data class TerminalConfigResponse(
-    val location_id: String? = null,
+    @Json(name = "location_id")
+    val locationId: String? = null,
 )
 
 @Serializable
