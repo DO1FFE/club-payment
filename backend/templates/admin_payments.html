@@ -9,14 +9,17 @@
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="{{ url_for('admin_web_users') }}">
+      <a class="brand" href="{{ url_for('admin_web_users' if is_admin else 'admin_web_payments') }}">
         <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
         <span>Club Payment</span>
       </a>
       <nav class="nav">
+        {% if is_admin %}
         <a class="nav-link" href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
         <a class="nav-link" href="{{ url_for('admin_web_products') }}">Produkte</a>
+        {% endif %}
         <a class="nav-link active" href="{{ url_for('admin_web_payments') }}">Zahlungen</a>
+        <a class="nav-link" href="{{ url_for('admin_web_account') }}">Konto</a>
       </nav>
       <form method="post" action="{{ url_for('admin_web_logout') }}">
         <button class="secondary" type="submit">Abmelden</button>
@@ -86,7 +89,7 @@
                   {% endif %}
                 </td>
                 <td data-label="Rueckerstattung">
-                  {% if payment.refundable_cents > 0 %}
+                  {% if can_refund and payment.refundable_cents > 0 %}
                   <form class="refund-form" method="post" action="{{ url_for('admin_web_payments') }}">
                     <input type="hidden" name="action" value="refund">
                     <input type="hidden" name="payment_intent_id" value="{{ payment.id }}">
@@ -101,7 +104,7 @@
                     <button class="danger" type="submit">Erstatten</button>
                   </form>
                   {% else %}
-                  <span class="muted">keine Rueckerstattung offen</span>
+                  <span class="muted">{{ 'keine Rueckerstattung offen' if can_refund else 'nur Ansicht' }}</span>
                   {% endif %}
                 </td>
               </tr>

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Konto</title>
+    <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('admin_web_users' if is_admin else 'admin_web_payments') }}">
+        <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
+        <span>Club Payment</span>
+      </a>
+      <nav class="nav">
+        {% if is_admin %}
+        <a class="nav-link" href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
+        <a class="nav-link" href="{{ url_for('admin_web_products') }}">Produkte</a>
+        {% endif %}
+        <a class="nav-link" href="{{ url_for('admin_web_payments') }}">Zahlungen</a>
+        <a class="nav-link active" href="{{ url_for('admin_web_account') }}">Konto</a>
+      </nav>
+      <form method="post" action="{{ url_for('admin_web_logout') }}">
+        <button class="secondary" type="submit">Abmelden</button>
+      </form>
+    </header>
+
+    <main class="page">
+      <section class="page-heading">
+        <p class="eyebrow">Angemeldet als {{ admin_name }} · {{ user.role.value }}</p>
+        <h1>Konto</h1>
+      </section>
+
+      {% if success_message %}
+      <p class="notice">{{ success_message }}</p>
+      {% endif %}
+
+      {% if error_message %}
+      <p class="alert">{{ error_message }}</p>
+      {% endif %}
+
+      <section class="panel account-panel">
+        <h2>Passwort &auml;ndern</h2>
+        <form class="stack" method="post" action="{{ url_for('admin_web_account') }}">
+          <label for="current_password">Aktuelles Passwort</label>
+          <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
+
+          <label for="new_password">Neues Passwort</label>
+          <input id="new_password" name="new_password" type="password" autocomplete="new-password" minlength="8" required>
+
+          <label for="confirm_password">Neues Passwort best&auml;tigen</label>
+          <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required>
+
+          <button type="submit">Passwort speichern</button>
+        </form>
+      </section>
+    </main>
+    <footer class="copyright">Copyright Erik Schauer, do1ffe@darc.de</footer>
+  </body>
+</html>

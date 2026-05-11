@@ -56,16 +56,24 @@ APK_DOWNLOAD_DIR = Path(os.getenv("APK_DOWNLOAD_DIR", Path(__file__).resolve().p
 APK_FILENAME_PATTERN = re.compile(r"club-payment-(?P<version>\d+(?:\.\d+)*)-release-signed\.apk$")
 
 
-def _get_admin_user_from_session():
+def _get_web_user_from_session():
     user_id = session.get("admin_user_id")
     if not isinstance(user_id, int):
         return None
     store = get_user_store()
     user = store.get_by_id(user_id)
-    if not user or not user.active or user.role != Role.ADMIN:
+    if not user or not user.active or user.role not in {Role.ADMIN, Role.KASSIERER}:
         session.pop("admin_user_id", None)
         return None
     return user
+
+
+def _is_admin(user) -> bool:
+    return user.role == Role.ADMIN
+
+
+def _default_web_endpoint_for_user(user) -> str:
+    return "admin_web_users" if _is_admin(user) else "admin_web_payments"
 
 
 def _format_price_euros(price_cents: int) -> str:
@@ -365,6 +373,7 @@ def _render_admin_users(admin_user, error_message: str | None = None):
     return render_template(
         "admin_users.html",
         admin_name=_user_identifier(admin_user),
+        is_admin=_is_admin(admin_user),
         users=users,
         assignments=assignments,
         devices=devices,
@@ -379,6 +388,7 @@ def _render_admin_products(admin_user, error_message: str | None = None):
     return render_template(
         "admin_products.html",
         admin_name=_user_identifier(admin_user),
+        is_admin=_is_admin(admin_user),
         products=list(store.list_products()),
         format_price_euros=_format_price_euros,
         error_message=error_message,
@@ -400,6 +410,8 @@ def _render_admin_payments(
     return render_template(
         "admin_payments.html",
         admin_name=_user_identifier(admin_user),
+        is_admin=_is_admin(admin_user),
+        can_refund=_is_admin(admin_user),
         payments=payments,
         format_price_euros=_format_price_euros,
         error_message=error_message,
@@ -661,8 +673,9 @@ def login():
 
 @app.route("/admin/web/login", methods=["GET", "POST"])
 def admin_web_login():
-    if _get_admin_user_from_session():
-        return redirect(url_for("admin_web_users"))
+    web_user = _get_web_user_from_session()
+    if web_user:
+        return redirect(url_for(_default_web_endpoint_for_user(web_user)))
 
     error_message = None
     if request.method == "POST":
@@ -680,11 +693,11 @@ def admin_web_login():
                 error_message = "Benutzername oder Passwort ungültig"
             elif not user.active:
                 error_message = "Benutzer ist deaktiviert"
-            elif user.role != Role.ADMIN:
-                error_message = "Nur Administratoren dürfen diese Aktion ausführen"
+            elif user.role not in {Role.ADMIN, Role.KASSIERER}:
+                error_message = "Nur Admins und Kassierer duerfen sich anmelden"
             else:
                 session["admin_user_id"] = user.id
-                return redirect(url_for("admin_web_users"))
+                return redirect(url_for(_default_web_endpoint_for_user(user)))
 
     return render_template("admin_login.html", error_message=error_message)
 
@@ -695,18 +708,69 @@ def admin_web_logout():
     return redirect(url_for("admin_web_login"))
 
 
+@app.route("/admin/web/account", methods=["GET", "POST"])
+def admin_web_account():
+    web_user = _get_web_user_from_session()
+    if not web_user:
+        return redirect(url_for("admin_web_login"))
+
+    error_message = None
+    success_message = None
+    if request.method == "POST":
+        current_password = request.form.get("current_password")
+        new_password = request.form.get("new_password")
+        confirm_password = request.form.get("confirm_password")
+
+        if not isinstance(current_password, str) or not current_password.strip():
+            error_message = "Aktuelles Passwort ist erforderlich"
+        elif not isinstance(new_password, str) or not new_password.strip():
+            error_message = "Neues Passwort ist erforderlich"
+        elif len(new_password.strip()) < 8:
+            error_message = "Neues Passwort muss mindestens 8 Zeichen lang sein"
+        elif new_password != confirm_password:
+            error_message = "Neue Passwoerter stimmen nicht ueberein"
+        elif not web_user.username:
+            error_message = "Dieser Nutzer hat keinen Benutzernamen"
+        else:
+            store = get_user_store()
+            if not store.authenticate(web_user.username, current_password):
+                error_message = "Aktuelles Passwort ist falsch"
+            else:
+                updated = store.update_user(
+                    user_id=web_user.id,
+                    password_hash=store.hash_password(new_password.strip()),
+                )
+                if not updated:
+                    error_message = "Nutzer konnte nicht aktualisiert werden"
+                else:
+                    web_user = updated
+                    success_message = "Passwort wurde aktualisiert"
+
+    return render_template(
+        "admin_account.html",
+        admin_name=_user_identifier(web_user),
+        user=web_user,
+        is_admin=_is_admin(web_user),
+        error_message=error_message,
+        success_message=success_message,
+    )
+
+
 @app.route("/admin/web")
 def admin_web_index():
-    if not _get_admin_user_from_session():
+    web_user = _get_web_user_from_session()
+    if not web_user:
         return redirect(url_for("admin_web_login"))
-    return redirect(url_for("admin_web_users"))
+    return redirect(url_for(_default_web_endpoint_for_user(web_user)))
 
 
 @app.route("/admin/web/users", methods=["GET", "POST"])
 def admin_web_users():
-    admin_user = _get_admin_user_from_session()
+    admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
+    if not _is_admin(admin_user):
+        return redirect(url_for("admin_web_payments"))
 
     error_message = None
     if request.method == "POST":
@@ -789,9 +853,11 @@ def admin_web_users():
 
 @app.route("/admin/web/devices", methods=["POST"])
 def admin_web_devices():
-    admin_user = _get_admin_user_from_session()
+    admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
+    if not _is_admin(admin_user):
+        return redirect(url_for("admin_web_payments"))
 
     action = request.form.get("action", "assign")
     device_id = request.form.get("device_id")
@@ -826,9 +892,11 @@ def admin_web_devices():
 
 @app.route("/admin/web/products", methods=["GET", "POST"])
 def admin_web_products():
-    admin_user = _get_admin_user_from_session()
+    admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
+    if not _is_admin(admin_user):
+        return redirect(url_for("admin_web_payments"))
 
     error_message = None
     if request.method == "POST":
@@ -879,7 +947,7 @@ def admin_web_products():
 
 @app.route("/admin/web/payments", methods=["GET", "POST"])
 def admin_web_payments():
-    admin_user = _get_admin_user_from_session()
+    admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
 
@@ -890,6 +958,8 @@ def admin_web_payments():
         try:
             if action != "refund":
                 raise APIError("Unbekannte Aktion", 400)
+            if not _is_admin(admin_user):
+                raise APIError("Nur Administratoren duerfen Rueckerstattungen ausloesen", 403)
             refunded_cents = _refund_payment_intent(
                 request.form.get("payment_intent_id"),
                 request.form.get("refund_amount"),
