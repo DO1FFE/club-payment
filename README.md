@@ -2,7 +2,7 @@
 
 Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für eine einfache Getränke-Kasse.
 
-Version 1.0.11 - © 2026 Erik Schauer, do1ffe@darc.de
+Version 1.0.12 - © 2026 Erik Schauer, do1ffe@darc.de
 
 ## Voraussetzungen
 
@@ -80,7 +80,7 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 ### Artefakte
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Release APK: `android/app/build/outputs/apk/release/app-release.apk`
-- Signierte PR-APK: `artifacts/club-payment-1.0.11-release-signed.apk`
+- Signierte PR-APK: `artifacts/club-payment-1.0.12-release-signed.apk`
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit

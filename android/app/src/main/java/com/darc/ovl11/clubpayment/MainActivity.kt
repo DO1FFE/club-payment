@@ -54,7 +54,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -78,9 +77,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.delay
@@ -122,6 +118,7 @@ class MainActivity : ComponentActivity() {
     private val authStore by lazy { AuthStore(applicationContext) }
     private val backendService by lazy { provideBackendService(BuildConfig.BACKEND_BASE_URL, authStore) }
     private val terminalManager by lazy { TerminalManager(applicationContext, backendService) }
+    private val nfcAvailability = MutableStateFlow(NfcAvailability.Unavailable)
 
     private val viewModel: PaymentViewModel by viewModels {
         object : ViewModelProvider.Factory {
@@ -143,11 +140,21 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        refreshNfcAvailability()
         setContent {
             ClubPaymentTheme {
-                AppContent(viewModel, authViewModel)
+                AppContent(viewModel, authViewModel, nfcAvailability)
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshNfcAvailability()
+    }
+
+    private fun refreshNfcAvailability() {
+        nfcAvailability.value = readNfcAvailability(this)
     }
 }
 
@@ -326,22 +333,15 @@ fun ClubPaymentTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-fun AppContent(viewModel: PaymentViewModel, authViewModel: AuthViewModel) {
+fun AppContent(
+    viewModel: PaymentViewModel,
+    authViewModel: AuthViewModel,
+    nfcAvailabilityState: StateFlow<NfcAvailability>,
+) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
     val authState by authViewModel.authState.collectAsState()
     val deviceName = viewModel.deviceName
-    var nfcAvailability by remember { mutableStateOf(readNfcAvailability(context)) }
-
-    DisposableEffect(context, lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                nfcAvailability = readNfcAvailability(context)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    val nfcAvailability by nfcAvailabilityState.collectAsState()
 
     Surface(
         modifier = Modifier.fillMaxSize(),
