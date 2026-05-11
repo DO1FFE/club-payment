@@ -66,6 +66,12 @@ class PaymentViewModelCartTest {
     }
 
     @Test
+    fun `normalizeStripeLocationId akzeptiert null und trimmt werte`() {
+        assertEquals("", normalizeStripeLocationId(null))
+        assertEquals("tml_123", normalizeStripeLocationId("  tml_123  "))
+    }
+
+    @Test
     fun `generateQrCodePixels erstellt quittungs qr code`() {
         val pixels = generateQrCodePixels("https://pay.stripe.com/receipts/test", size = 128)
 

@@ -138,6 +138,32 @@ def test_terminal_config_creates_test_location_when_missing(client, monkeypatch)
     assert response.get_json() == {"location_id": "tml_created"}
 
 
+def test_terminal_config_rejects_empty_stripe_location(client, monkeypatch):
+    test_client, app_module = client
+    monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "")
+    monkeypatch.setattr(app_module, "STRIPE_SECRET_KEY", "sk_live_dummy")
+
+    class DummyLocation:
+        id = None
+
+    class DummyLocations:
+        data = [DummyLocation()]
+
+    def fake_list(limit):
+        assert limit == 1
+        return DummyLocations()
+
+    monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
+
+    response = test_client.get(
+        "/terminal/config",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 400
+    assert "Keine Stripe Terminal Location gefunden" in response.get_json()["error"]
+
+
 def test_create_payment_intent_success(client, monkeypatch):
     test_client, app_module = client
 
