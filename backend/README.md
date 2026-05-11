@@ -49,6 +49,7 @@ python app.py
 
 - `GET /` -> deutsche Landingpage mit Download-Link zur aktuellen Android-APK
 - `GET /apk/latest` -> laedt die neueste signierte APK aus `APK_DOWNLOAD_DIR` herunter
+- `GET /api/app/latest` -> liefert Metadaten zur neuesten APK fuer den Update-Hinweis in der Android-App
 - `GET /admin/web/login` und `/admin/web` -> Weboberflaeche fuer Admins und Kassierer
 - `GET/POST /admin/web/account` -> eigenes Passwort aendern
 

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.net.Uri
 import android.nfc.NfcAdapter
 import android.os.Bundle
 import android.provider.Settings
@@ -108,6 +109,18 @@ enum class NfcAvailability {
     Unavailable,
 }
 
+sealed class AppUpdateState {
+    data object Idle : AppUpdateState()
+    data object UpToDate : AppUpdateState()
+    data object Dismissed : AppUpdateState()
+    data class Available(
+        val version: String,
+        val downloadUrl: String,
+        val sizeMb: String?,
+    ) : AppUpdateState()
+    data class Error(val message: String) : AppUpdateState()
+}
+
 data class CustomCartItem(
     val id: Int,
     val description: String,
@@ -190,7 +203,47 @@ class PaymentViewModel(
     private val _productsError = MutableStateFlow<String?>(null)
     val productsError: StateFlow<String?> = _productsError
 
+    private val _appUpdate = MutableStateFlow<AppUpdateState>(AppUpdateState.Idle)
+    val appUpdate: StateFlow<AppUpdateState> = _appUpdate
+    private var appUpdateCheckInProgress = false
+
     val deviceName: String = terminalManager.readableDeviceName()
+
+    fun checkForAppUpdate(currentVersion: String = BuildConfig.VERSION_NAME) {
+        if (appUpdateCheckInProgress) {
+            return
+        }
+        viewModelScope.launch {
+            appUpdateCheckInProgress = true
+            try {
+                val response = backendService.getLatestAppVersion()
+                val latestVersion = response.version?.trim().orEmpty()
+                _appUpdate.value = if (
+                    response.available &&
+                    latestVersion.isNotBlank() &&
+                    compareVersionNames(latestVersion, currentVersion) > 0
+                ) {
+                    AppUpdateState.Available(
+                        version = latestVersion,
+                        downloadUrl = buildBackendDownloadUrl(response.downloadPath),
+                        sizeMb = response.sizeMb?.takeIf { it.isNotBlank() },
+                    )
+                } else {
+                    AppUpdateState.UpToDate
+                }
+            } catch (e: Exception) {
+                _appUpdate.value = AppUpdateState.Error(e.backendErrorMessage("Update-Pruefung fehlgeschlagen"))
+            } finally {
+                appUpdateCheckInProgress = false
+            }
+        }
+    }
+
+    fun dismissAppUpdate() {
+        if (_appUpdate.value is AppUpdateState.Available) {
+            _appUpdate.value = AppUpdateState.Dismissed
+        }
+    }
 
     fun loadProducts() {
         viewModelScope.launch {
@@ -340,8 +393,27 @@ fun AppContent(
 ) {
     val context = LocalContext.current
     val authState by authViewModel.authState.collectAsState()
+    val appUpdate by viewModel.appUpdate.collectAsState()
+    val paymentStatus by viewModel.status.collectAsState()
     val deviceName = viewModel.deviceName
     val nfcAvailability by nfcAvailabilityState.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.checkForAppUpdate()
+    }
+
+    if (canShowAppUpdateDialog(paymentStatus)) {
+        (appUpdate as? AppUpdateState.Available)?.let { update ->
+            AppUpdateDialog(
+                update = update,
+                onOpenUpdate = {
+                    openExternalUrl(context, update.downloadUrl)
+                    viewModel.dismissAppUpdate()
+                },
+                onDismiss = { viewModel.dismissAppUpdate() }
+            )
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -1215,6 +1287,59 @@ fun PaymentResultDialog(status: PaymentStatus, onDismiss: () -> Unit) {
 }
 
 @Composable
+fun AppUpdateDialog(
+    update: AppUpdateState.Available,
+    onOpenUpdate: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sizeText = update.sizeMb?.let { " ($it MB)" }.orEmpty()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Surface(
+                modifier = Modifier.size(46.dp),
+                shape = CircleShape,
+                color = ClubGold.copy(alpha = 0.18f),
+                contentColor = ClubGreen
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_download),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        },
+        title = {
+            Text(
+                text = "Update verfuegbar",
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Text(
+                text = "Version ${update.version}$sizeText steht bereit. Bitte aktualisieren, sobald gerade keine Zahlung laeuft.",
+                color = ClubMuted,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onOpenUpdate) {
+                Text("Aktualisieren")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Spaeter")
+            }
+        },
+        shape = RoundedCornerShape(8.dp),
+        containerColor = ClubSurface
+    )
+}
+
+@Composable
 fun PaymentSuccessDialogContent(status: PaymentStatus.Success) {
     Column(
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1665,6 +1790,10 @@ fun shouldShowPaymentResultDialog(status: PaymentStatus): Boolean {
     return status is PaymentStatus.Success || status is PaymentStatus.Error
 }
 
+fun canShowAppUpdateDialog(status: PaymentStatus): Boolean {
+    return status is PaymentStatus.Idle
+}
+
 fun hasStripeLocationPermission(context: Context): Boolean {
     return ContextCompat.checkSelfPermission(
         context,
@@ -1689,6 +1818,41 @@ fun openNfcSettings(context: Context) {
         val wirelessIntent = Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(wirelessIntent)
     }
+}
+
+fun openExternalUrl(context: Context, url: String) {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+    }
+}
+
+fun buildBackendDownloadUrl(downloadPath: String?): String {
+    val path = downloadPath?.trim().orEmpty()
+    if (path.startsWith("https://") || path.startsWith("http://")) {
+        return path
+    }
+    val baseUrl = BuildConfig.BACKEND_BASE_URL.trimEnd('/')
+    if (path.isBlank()) {
+        return baseUrl
+    }
+    val normalizedPath = if (path.startsWith("/")) path else "/$path"
+    return "$baseUrl$normalizedPath"
+}
+
+fun compareVersionNames(left: String, right: String): Int {
+    val leftParts = left.split(".").map { it.toIntOrNull() ?: 0 }
+    val rightParts = right.split(".").map { it.toIntOrNull() ?: 0 }
+    val maxSize = maxOf(leftParts.size, rightParts.size)
+    for (index in 0 until maxSize) {
+        val leftPart = leftParts.getOrElse(index) { 0 }
+        val rightPart = rightParts.getOrElse(index) { 0 }
+        if (leftPart != rightPart) {
+            return leftPart.compareTo(rightPart)
+        }
+    }
+    return 0
 }
 
 fun formatCurrency(amountCents: Int): String {

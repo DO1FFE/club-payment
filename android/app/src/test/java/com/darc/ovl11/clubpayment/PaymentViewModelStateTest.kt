@@ -1,7 +1,9 @@
 package com.darc.ovl11.clubpayment
 
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.mockito.kotlin.mock
@@ -52,5 +54,54 @@ class PaymentViewModelStateTest {
 
         assertEquals(emptyMap<Int, Int>(), viewModel.selectedItems.value)
         assertEquals(emptyList<CustomCartItem>(), viewModel.customItems.value)
+    }
+
+    @Test
+    fun `checkForAppUpdate meldet neue apk version`() = runTest {
+        val terminalManager = mock<TerminalManager>()
+        whenever(terminalManager.readableDeviceName()).thenReturn("test-geraet")
+        val authStore = mock<AuthStore>()
+        val backendService = mock<BackendService>()
+        whenever(backendService.getLatestAppVersion()).thenReturn(
+            AppVersionResponse(
+                available = true,
+                version = "1.0.13",
+                sizeMb = "46,5",
+                downloadPath = "/apk/latest",
+            )
+        )
+
+        val viewModel = PaymentViewModel(terminalManager, authStore, backendService)
+
+        viewModel.checkForAppUpdate(currentVersion = "1.0.12")
+        advanceUntilIdle()
+
+        val update = viewModel.appUpdate.value
+        assertTrue(update is AppUpdateState.Available)
+        update as AppUpdateState.Available
+        assertEquals("1.0.13", update.version)
+        assertEquals("https://payment.lima11.de/apk/latest", update.downloadUrl)
+    }
+
+    @Test
+    fun `checkForAppUpdate bleibt ruhig wenn version aktuell ist`() = runTest {
+        val terminalManager = mock<TerminalManager>()
+        whenever(terminalManager.readableDeviceName()).thenReturn("test-geraet")
+        val authStore = mock<AuthStore>()
+        val backendService = mock<BackendService>()
+        whenever(backendService.getLatestAppVersion()).thenReturn(
+            AppVersionResponse(
+                available = true,
+                version = "1.0.12",
+                downloadPath = "/apk/latest",
+            )
+        )
+
+        val viewModel = PaymentViewModel(terminalManager, authStore, backendService)
+
+        viewModel.checkForAppUpdate(currentVersion = "1.0.12")
+        advanceUntilIdle()
+
+        assertEquals(AppUpdateState.UpToDate, viewModel.appUpdate.value)
     }
 }
