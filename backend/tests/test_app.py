@@ -922,3 +922,177 @@ def test_admin_web_product_page_create_and_update(client):
     )
     assert delete_response.status_code == 302
     assert all(product.id != product_id for product in store.list_products())
+
+
+def test_admin_web_payments_page_lists_successful_payments(client, monkeypatch):
+    test_client, app_module = client
+    test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+
+    class DummyCharge:
+        id = "ch_paid"
+        amount = 500
+        amount_refunded = 100
+        currency = "eur"
+        refunded = False
+        receipt_url = "https://pay.stripe.com/receipts/test"
+        balance_transaction = "txn_paid"
+
+    class DummyIntent:
+        id = "pi_paid"
+        created = 1710000000
+        status = "succeeded"
+        amount = 500
+        currency = "eur"
+        latest_charge = DummyCharge()
+        metadata = {
+            "club": "DARC e.V. OV L11",
+            "item": "Cola",
+            "kassierer": "admin",
+            "device": "android-1",
+        }
+
+    class DummyIntentList:
+        data = [DummyIntent()]
+
+    class DummyBalanceTransaction:
+        id = "txn_paid"
+        status = "available"
+        available_on = 1710086400
+        payout = "po_paid"
+
+    class DummyPayout:
+        id = "po_paid"
+        status = "paid"
+        arrival_date = 1710172800
+
+    def fake_list(**kwargs):
+        assert kwargs["limit"] == 100
+        assert kwargs["expand"] == ["data.latest_charge", "data.latest_charge.balance_transaction"]
+        return DummyIntentList()
+
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "list", staticmethod(fake_list))
+    monkeypatch.setattr(
+        app_module.stripe.BalanceTransaction,
+        "retrieve",
+        staticmethod(lambda balance_transaction_id: DummyBalanceTransaction()),
+    )
+    monkeypatch.setattr(app_module.stripe.Payout, "retrieve", staticmethod(lambda payout_id: DummyPayout()))
+
+    response = test_client.get("/admin/web/payments")
+
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert "Zahlungen" in page
+    assert "Cola" in page
+    assert "admin" in page
+    assert "android-1" in page
+    assert "https://pay.stripe.com/receipts/test" in page
+    assert "ausgezahlt" in page
+    assert "po_paid" in page
+    assert "Erstatten" in page
+
+
+def test_admin_web_payments_refund_success(client, monkeypatch):
+    test_client, app_module = client
+    test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+
+    class DummyCharge:
+        id = "ch_paid"
+        amount = 500
+        amount_refunded = 100
+        currency = "eur"
+        refunded = False
+        receipt_url = "https://pay.stripe.com/receipts/test"
+
+    class DummyIntent:
+        id = "pi_paid"
+        created = 1710000000
+        status = "succeeded"
+        amount = 500
+        currency = "eur"
+        latest_charge = DummyCharge()
+        metadata = {"club": "DARC e.V. OV L11", "item": "Cola"}
+
+    class DummyIntentList:
+        data = [DummyIntent()]
+
+    def fake_retrieve(payment_intent_id, **kwargs):
+        assert payment_intent_id == "pi_paid"
+        assert kwargs["expand"] == ["latest_charge"]
+        return DummyIntent()
+
+    created_refund = {}
+
+    def fake_refund_create(**kwargs):
+        created_refund.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "retrieve", staticmethod(fake_retrieve))
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "list", staticmethod(lambda **kwargs: DummyIntentList()))
+    monkeypatch.setattr(app_module.stripe.Refund, "create", staticmethod(fake_refund_create))
+
+    response = test_client.post(
+        "/admin/web/payments",
+        data={
+            "action": "refund",
+            "payment_intent_id": "pi_paid",
+            "refund_amount": "4,00",
+        },
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert created_refund == {
+        "payment_intent": "pi_paid",
+        "amount": 400,
+        "reason": "requested_by_customer",
+        "metadata": {"refunded_by": "club-payment-admin"},
+    }
+    assert "4,00 EUR wurden erstattet." in response.get_data(as_text=True)
+
+
+def test_admin_web_payments_refund_rejects_too_large_amount(client, monkeypatch):
+    test_client, app_module = client
+    test_client.post(
+        "/admin/web/login",
+        data={"username": "admin", "password": "admin-passwort"},
+    )
+
+    class DummyCharge:
+        amount = 500
+        amount_refunded = 100
+        currency = "eur"
+        refunded = False
+
+    class DummyIntent:
+        id = "pi_paid"
+        created = 1710000000
+        status = "succeeded"
+        amount = 500
+        currency = "eur"
+        latest_charge = DummyCharge()
+        metadata = {"club": "DARC e.V. OV L11"}
+
+    class DummyIntentList:
+        data = [DummyIntent()]
+
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "retrieve", staticmethod(lambda *args, **kwargs: DummyIntent()))
+    monkeypatch.setattr(app_module.stripe.PaymentIntent, "list", staticmethod(lambda **kwargs: DummyIntentList()))
+
+    response = test_client.post(
+        "/admin/web/payments",
+        data={
+            "action": "refund",
+            "payment_intent_id": "pi_paid",
+            "refund_amount": "4,01",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Rueckerstattung darf den offenen Betrag nicht ueberschreiten" in response.get_data(as_text=True)

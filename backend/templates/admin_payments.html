@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin Zahlungen</title>
+    <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('admin_web_users') }}">
+        <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
+        <span>Club Payment</span>
+      </a>
+      <nav class="nav">
+        <a class="nav-link" href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
+        <a class="nav-link" href="{{ url_for('admin_web_products') }}">Produkte</a>
+        <a class="nav-link active" href="{{ url_for('admin_web_payments') }}">Zahlungen</a>
+      </nav>
+      <form method="post" action="{{ url_for('admin_web_logout') }}">
+        <button class="secondary" type="submit">Abmelden</button>
+      </form>
+    </header>
+
+    <main class="page">
+      <section class="page-heading">
+        <p class="eyebrow">Angemeldet als {{ admin_name }}</p>
+        <h1>Zahlungen</h1>
+      </section>
+
+      {% if success_message %}
+      <p class="notice">{{ success_message }}</p>
+      {% endif %}
+
+      {% if error_message %}
+      <p class="alert">{{ error_message }}</p>
+      {% endif %}
+
+      <section class="panel">
+        <h2>Erfolgreiche Zahlungen</h2>
+        {% if payments %}
+        <div class="table-wrap">
+          <table class="payments-table">
+            <thead>
+              <tr>
+                <th>Zeitpunkt</th>
+                <th>Artikel</th>
+                <th>Kassierer</th>
+                <th>Ger&auml;t</th>
+                <th>Betrag</th>
+                <th>Erstattet</th>
+                <th>Auszahlung</th>
+                <th>Beleg</th>
+                <th>Rueckerstattung</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for payment in payments %}
+              <tr>
+                <td>
+                  <strong>{{ payment.created_label }}</strong>
+                  <span class="muted payment-id">{{ payment.id }}</span>
+                </td>
+                <td>{{ payment.item }}</td>
+                <td>{{ payment.cashier }}</td>
+                <td>{{ payment.device }}</td>
+                <td>{{ format_price_euros(payment.amount_cents) }} {{ payment.currency }}</td>
+                <td>
+                  {{ format_price_euros(payment.amount_refunded_cents) }} {{ payment.currency }}
+                  {% if payment.refunded %}
+                  <span class="badge">voll erstattet</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <strong>{{ payment.payout_label }}</strong>
+                  {% if payment.payout_detail %}
+                  <span class="muted payment-id">{{ payment.payout_detail }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if payment.receipt_url %}
+                  <a class="secondary-link" href="{{ payment.receipt_url }}" target="_blank" rel="noopener">Beleg</a>
+                  {% else %}
+                  <span class="muted">-</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if payment.refundable_cents > 0 %}
+                  <form class="refund-form" method="post" action="{{ url_for('admin_web_payments') }}">
+                    <input type="hidden" name="action" value="refund">
+                    <input type="hidden" name="payment_intent_id" value="{{ payment.id }}">
+                    <input
+                      id="refund_amount_{{ loop.index }}"
+                      name="refund_amount"
+                      type="text"
+                      inputmode="decimal"
+                      value="{{ format_price_euros(payment.refundable_cents) }}"
+                      aria-label="Rueckerstattungsbetrag"
+                    >
+                    <button class="danger" type="submit">Erstatten</button>
+                  </form>
+                  {% else %}
+                  <span class="muted">keine Rueckerstattung offen</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="empty-state">Noch keine erfolgreichen Zahlungen bei Stripe gefunden.</p>
+        {% endif %}
+      </section>
+    </main>
+    <footer class="copyright">Copyright Erik Schauer, do1ffe@darc.de</footer>
+  </body>
+</html>
