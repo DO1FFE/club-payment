@@ -1,11 +1,13 @@
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_cors import CORS
 import stripe
 
@@ -50,6 +52,8 @@ STRIPE_LOCATION_ADDRESS = {
     "country": os.getenv("STRIPE_LOCATION_ADDRESS_COUNTRY", "DE"),
     "postal_code": os.getenv("STRIPE_LOCATION_ADDRESS_POSTAL_CODE", "10115"),
 }
+APK_DOWNLOAD_DIR = Path(os.getenv("APK_DOWNLOAD_DIR", Path(__file__).resolve().parents[1] / "artifacts"))
+APK_FILENAME_PATTERN = re.compile(r"club-payment-(?P<version>\d+(?:\.\d+)*)-release-signed\.apk$")
 
 
 def _get_admin_user_from_session():
@@ -70,6 +74,39 @@ def _format_price_euros(price_cents: int) -> str:
 
 def _user_identifier(user) -> str:
     return user.username or user.name
+
+
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
+
+
+def _latest_apk_info() -> dict | None:
+    apk_dir = Path(APK_DOWNLOAD_DIR)
+    if not apk_dir.exists():
+        return None
+
+    candidates = []
+    for apk_path in apk_dir.glob("club-payment-*-release-signed.apk"):
+        match = APK_FILENAME_PATTERN.fullmatch(apk_path.name)
+        if not match:
+            continue
+        version = match.group("version")
+        candidates.append((
+            _version_key(version),
+            apk_path.stat().st_mtime,
+            apk_path,
+            version,
+        ))
+    if not candidates:
+        return None
+
+    _, _, apk_path, version = max(candidates, key=lambda item: (item[0], item[1], item[2].name))
+    return {
+        "path": apk_path,
+        "filename": apk_path.name,
+        "version": version,
+        "size_mb": f"{apk_path.stat().st_size / 1024 / 1024:.1f}".replace(".", ","),
+    }
 
 
 def _active_admin_count() -> int:
@@ -367,6 +404,24 @@ def _render_admin_payments(
         format_price_euros=_format_price_euros,
         error_message=error_message,
         success_message=success_message,
+    )
+
+
+@app.route("/")
+def landing_page():
+    return render_template("landing.html", apk=_latest_apk_info())
+
+
+@app.route("/apk/latest")
+def download_latest_apk():
+    apk = _latest_apk_info()
+    if not apk:
+        return "Keine APK verfuegbar", 404
+    return send_file(
+        apk["path"],
+        as_attachment=True,
+        download_name=apk["filename"],
+        mimetype="application/vnd.android.package-archive",
     )
 
 

@@ -29,6 +29,10 @@ Environment variables used:
 - `ALLOWED_ORIGINS` – comma-separated CORS origins (use `*` to allow all during development)
 - `PORT` – port to bind (default 4040)
 
+Additional optional variable:
+
+- `APK_DOWNLOAD_DIR` -> optional path for signed APK downloads; defaults to the repository `artifacts/` folder
+
 ## Run locally
 
 ```bash
@@ -43,6 +47,8 @@ python app.py
 
 ## Endpoints
 
+- `GET /` -> deutsche Landingpage mit Download-Link zur aktuellen Android-APK
+- `GET /apk/latest` -> laedt die neueste signierte APK aus `APK_DOWNLOAD_DIR` herunter
 - `GET /admin/web/login` und `/admin/web` -> Admin-Weboberflaeche fuer Nutzer, Geraete, Produkte und erfolgreiche Zahlungen
 
 - `GET /terminal/config` -> benoetigt `Authorization: Bearer <token>`, returns `{ "location_id": "tml_..." }` for Tap to Pay
@@ -77,4 +83,5 @@ Benutzer passt. Die Zuordnung wird zusätzlich als `user_id` und `role` in der P
 ## Notes
 
 - This service purposely does not store payment data; all heavy lifting is done by Stripe.
+- Stripe-hosted receipts can be localized in German through the Stripe Dashboard customer email/receipt language or through Customer `preferred_locales=["de"]`. Anonymous Terminal receipt links without Customer or email cannot be forced per payment by this backend.
 - When exposing publicly, ensure HTTPS termination and restrict CORS to the production app domain.

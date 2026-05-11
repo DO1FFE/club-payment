@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Club Kasse</title>
+    <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  </head>
+  <body class="landing-page">
+    <main class="landing-shell">
+      <section class="landing-panel">
+        <div class="brand-block">
+          <img class="brand-logo landing-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
+          <div>
+            <p class="eyebrow">DARC OV L11</p>
+            <h1>Club Kasse</h1>
+          </div>
+        </div>
+
+        <p class="landing-copy">
+          Kartenzahlung per NFC mit der Android-App und Stripe Terminal.
+        </p>
+
+        <div class="landing-actions">
+          {% if apk %}
+          <a class="button-link" href="{{ url_for('download_latest_apk') }}">
+            Android-App herunterladen
+          </a>
+          <span class="muted">Version {{ apk.version }} · {{ apk.size_mb }} MB</span>
+          {% else %}
+          <span class="alert">Aktuell ist keine APK-Datei verf&uuml;gbar.</span>
+          {% endif %}
+          <a class="secondary-link" href="{{ url_for('admin_web_login') }}">Admin-Bereich</a>
+        </div>
+      </section>
+    </main>
+    <footer class="copyright">Copyright Erik Schauer, do1ffe@darc.de</footer>
+  </body>
+</html>
