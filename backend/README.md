@@ -21,8 +21,8 @@ cp .env.example .env  # then edit with your keys
 Environment variables used:
 
 - `STRIPE_SECRET_KEY` – required secret key
-- `STRIPE_LOCATION_ID` – optional Terminal Location ID (`tml_...`) for Tap to Pay; in test mode the backend uses the first existing Terminal location or creates a default test location if none exists
-- `STRIPE_LOCATION_DISPLAY_NAME`, `STRIPE_LOCATION_ADDRESS_LINE1`, `STRIPE_LOCATION_ADDRESS_CITY`, `STRIPE_LOCATION_ADDRESS_COUNTRY`, `STRIPE_LOCATION_ADDRESS_POSTAL_CODE` – optional defaults when creating a test Terminal location
+- `STRIPE_LOCATION_ID` – optional Terminal Location ID (`tml_...`) for Tap to Pay; when empty, the backend reads the first existing Stripe Terminal location or creates a default location automatically
+- `STRIPE_LOCATION_DISPLAY_NAME`, `STRIPE_LOCATION_ADDRESS_LINE1`, `STRIPE_LOCATION_ADDRESS_CITY`, `STRIPE_LOCATION_ADDRESS_COUNTRY`, `STRIPE_LOCATION_ADDRESS_POSTAL_CODE` – optional defaults when automatically creating a Terminal location
 - `STRIPE_WEBHOOK_SECRET` – optional, enables webhook signature verification
 - `FLASK_SECRET_KEY` – required for stable admin web sessions in non-development deployments
 - `ADMIN_API_TOKEN`, `ADMIN_NAME`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` – optional initial admin bootstrap

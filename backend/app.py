@@ -105,26 +105,26 @@ def _resolve_terminal_location_id() -> str:
         return configured_location_id
 
     try:
-        locations = stripe.terminal.Location.list(limit=1)
+        locations = stripe.terminal.Location.list(limit=100)
         for location in getattr(locations, "data", None) or []:
             location_id = (getattr(location, "id", None) or "").strip()
             if location_id:
                 return location_id
 
-        if STRIPE_SECRET_KEY.startswith("sk_test_"):
-            location = stripe.terminal.Location.create(
-                display_name=STRIPE_LOCATION_DISPLAY_NAME,
-                address=STRIPE_LOCATION_ADDRESS,
-            )
-            location_id = (getattr(location, "id", None) or "").strip()
-            if location_id:
-                return location_id
+        location = stripe.terminal.Location.create(
+            display_name=STRIPE_LOCATION_DISPLAY_NAME,
+            address=STRIPE_LOCATION_ADDRESS,
+            metadata={"created_by": "club-payment-backend"},
+        )
+        location_id = (getattr(location, "id", None) or "").strip()
+        if location_id:
+            return location_id
     except stripe.error.StripeError as err:
         logger.warning("Could not resolve Stripe Terminal location: %s", err)
         raise APIError("Stripe Terminal Location konnte nicht geladen werden", 502)
 
     raise APIError(
-        "Keine Stripe Terminal Location gefunden. Bitte STRIPE_LOCATION_ID setzen oder eine Terminal-Location in Stripe anlegen.",
+        "Keine Stripe Terminal Location gefunden oder automatisch angelegt.",
         400,
     )
 
