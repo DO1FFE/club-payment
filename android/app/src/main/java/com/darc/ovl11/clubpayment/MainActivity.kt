@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -74,6 +75,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -227,6 +229,12 @@ class PaymentViewModel(
         _status.value = PaymentStatus.Error(message)
     }
 
+    fun dismissPaymentResult() {
+        if (shouldShowPaymentResultDialog(_status.value)) {
+            _status.value = PaymentStatus.Idle
+        }
+    }
+
     fun startPayment(amountCents: Int, itemLabel: String) {
         viewModelScope.launch {
             try {
@@ -250,7 +258,7 @@ class PaymentViewModel(
                     return@launch
                 }
                 val paidAmountCents = processed.amount.toInt()
-                val receiptResult = fetchReceiptUrl(processedIntentId)
+                val receiptResult = fetchReceiptUrlWithRetry(processedIntentId)
                 _status.value = PaymentStatus.Success(
                     amountCents = paidAmountCents,
                     intentId = processedIntentId,
@@ -264,13 +272,24 @@ class PaymentViewModel(
         }
     }
 
-    private suspend fun fetchReceiptUrl(paymentIntentId: String): Pair<String?, String?> {
-        return try {
-            val response = backendService.getReceipt(paymentIntentId)
-            Pair(response.receipt_url, null)
-        } catch (e: Exception) {
-            Pair(null, e.backendErrorMessage("Beleg konnte nicht geladen werden"))
+    private suspend fun fetchReceiptUrlWithRetry(paymentIntentId: String): Pair<String?, String?> {
+        var lastError: String? = null
+        repeat(5) { attempt ->
+            try {
+                val response = backendService.getReceipt(paymentIntentId)
+                val receiptUrl = response.receiptUrl.trim()
+                if (receiptUrl.isNotBlank()) {
+                    return Pair(receiptUrl, null)
+                }
+                lastError = "Beleg-URL ist leer"
+            } catch (e: Exception) {
+                lastError = e.backendErrorMessage("Beleg konnte nicht geladen werden")
+            }
+            if (attempt < 4) {
+                delay(1500)
+            }
         }
+        return Pair(null, lastError ?: "Beleg konnte nicht geladen werden")
     }
 }
 
@@ -473,6 +492,14 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
             viewModel.showPaymentError(LocationPermissionMessage)
         }
     }
+    val paymentResult = status.takeIf { shouldShowPaymentResultDialog(it) }
+
+    if (paymentResult != null) {
+        PaymentResultDialog(
+            status = paymentResult,
+            onDismiss = { viewModel.dismissPaymentResult() }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -540,11 +567,6 @@ fun PaymentScreen(viewModel: PaymentViewModel, userName: String, deviceName: Str
         }
 
         StatusCard(status)
-
-        val success = status as? PaymentStatus.Success
-        if (success?.receiptUrl != null) {
-            ReceiptQrCard(success.receiptUrl)
-        }
 
         CopyrightFooter()
     }
@@ -1085,6 +1107,114 @@ fun StatusCard(status: PaymentStatus) {
 }
 
 @Composable
+fun PaymentResultDialog(status: PaymentStatus, onDismiss: () -> Unit) {
+    val statusInfo = statusInfo(status)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Surface(
+                modifier = Modifier.size(46.dp),
+                shape = CircleShape,
+                color = statusInfo.tint.copy(alpha = 0.14f),
+                contentColor = statusInfo.tint
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(statusInfo.icon),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+        },
+        title = {
+            Text(
+                text = statusInfo.title,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            when (status) {
+                is PaymentStatus.Success -> PaymentSuccessDialogContent(status)
+                is PaymentStatus.Error -> Text(
+                    text = status.message,
+                    color = ClubMuted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                else -> Text(
+                    text = statusInfo.message,
+                    color = ClubMuted,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Schliessen")
+            }
+        },
+        shape = RoundedCornerShape(8.dp),
+        containerColor = ClubSurface
+    )
+}
+
+@Composable
+fun PaymentSuccessDialogContent(status: PaymentStatus.Success) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "${formatCurrency(status.amountCents)} wurden erfolgreich bezahlt.",
+            color = ClubMuted,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (status.receiptUrl != null) {
+            ReceiptQrContent(status.receiptUrl)
+        } else {
+            ErrorText("Zahlung erfolgreich, aber der Kundenbeleg konnte nicht geladen werden: ${status.receiptError ?: "Beleg-URL fehlt"}")
+        }
+    }
+}
+
+@Composable
+fun ReceiptQrContent(receiptUrl: String) {
+    val qrBitmap = remember(receiptUrl) { generateQrCodeBitmap(receiptUrl) }
+    if (qrBitmap == null) {
+        ErrorText("QR-Code konnte nicht erstellt werden")
+    } else {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            border = BorderStroke(1.dp, ClubBorder),
+            color = Color.White
+        ) {
+            Image(
+                bitmap = qrBitmap.asImageBitmap(),
+                contentDescription = "QR-Code fuer die Quittung",
+                modifier = Modifier
+                    .size(220.dp)
+                    .padding(10.dp)
+            )
+        }
+        Text(
+            text = "QR-Code scannen, um die Quittung anzusehen.",
+            color = ClubMuted,
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = receiptUrl,
+            color = ClubMuted,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
 fun ReceiptQrCard(receiptUrl: String) {
     val qrBitmap = remember(receiptUrl) { generateQrCodeBitmap(receiptUrl) }
     Card(
@@ -1419,6 +1549,10 @@ fun isPayButtonEnabled(totalAmountCents: Int, status: PaymentStatus): Boolean {
         status is PaymentStatus.Processing ||
         status is PaymentStatus.FetchingReceipt
     return totalAmountCents > 0 && !paymentInProgress
+}
+
+fun shouldShowPaymentResultDialog(status: PaymentStatus): Boolean {
+    return status is PaymentStatus.Success || status is PaymentStatus.Error
 }
 
 fun hasStripeLocationPermission(context: Context): Boolean {

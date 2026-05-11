@@ -86,6 +86,18 @@ class PaymentViewModelCartTest {
     }
 
     @Test
+    fun `ReceiptResponse liest beleg url aus backend json`() {
+        val moshi = Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+        val adapter = moshi.adapter(ReceiptResponse::class.java)
+
+        val response = adapter.fromJson("""{"receipt_url":"https://pay.stripe.com/receipts/test"}""")
+
+        assertEquals("https://pay.stripe.com/receipts/test", response?.receiptUrl)
+    }
+
+    @Test
     fun `generateQrCodePixels erstellt quittungs qr code`() {
         val pixels = generateQrCodePixels("https://pay.stripe.com/receipts/test", size = 128)
 
@@ -99,5 +111,21 @@ class PaymentViewModelCartTest {
         assertFalse(isPayButtonEnabled(100, PaymentStatus.ActivatingPhoneNfc))
         assertFalse(isPayButtonEnabled(100, PaymentStatus.Processing))
         assertTrue(isPayButtonEnabled(100, PaymentStatus.Error("Fehler")))
+    }
+
+    @Test
+    fun `shouldShowPaymentResultDialog reagiert nur auf erfolg und fehler`() {
+        assertFalse(shouldShowPaymentResultDialog(PaymentStatus.Idle))
+        assertFalse(shouldShowPaymentResultDialog(PaymentStatus.Processing))
+        assertTrue(shouldShowPaymentResultDialog(PaymentStatus.Error("Fehler")))
+        assertTrue(
+            shouldShowPaymentResultDialog(
+                PaymentStatus.Success(
+                    amountCents = 150,
+                    intentId = "pi_test",
+                    receiptUrl = "https://pay.stripe.com/receipts/test",
+                )
+            )
+        )
     }
 }

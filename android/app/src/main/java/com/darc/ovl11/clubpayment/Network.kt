@@ -59,7 +59,8 @@ data class PaymentIntentResponse(
 
 @Serializable
 data class ReceiptResponse(
-    val receipt_url: String,
+    @Json(name = "receipt_url")
+    val receiptUrl: String,
 )
 
 @Serializable

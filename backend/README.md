@@ -43,7 +43,7 @@ python app.py
 
 ## Endpoints
 
-- `GET /admin/web/login` und `/admin/web` -> Admin-Weboberflaeche fuer Nutzer, Geraete und Produkte
+- `GET /admin/web/login` und `/admin/web` -> Admin-Weboberflaeche fuer Nutzer, Geraete, Produkte und erfolgreiche Zahlungen
 
 - `GET /terminal/config` -> benoetigt `Authorization: Bearer <token>`, returns `{ "location_id": "tml_..." }` for Tap to Pay
 - `POST /terminal/connection_token` → benötigt `Authorization: Bearer <token>`, returns `{ "secret": "..." }` for Stripe Terminal SDK
@@ -57,6 +57,7 @@ python app.py
 - `DELETE /admin/devices/<device_id>` -> benoetigt Admin-Token, loescht eine Geraetezuordnung
 
 - `POST /admin/products`, `GET /admin/products`, `PATCH /admin/products/<id>` -> Produkte verwalten
+- `GET/POST /admin/web/payments` -> erfolgreiche Stripe-Zahlungen samt Auszahlungsstatus anzeigen und Rueckerstattungen ausloesen
 
 Errors are returned as JSON with an `error` key and HTTP status code.
 

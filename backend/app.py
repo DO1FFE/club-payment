@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from dotenv import load_dotenv
@@ -99,6 +100,188 @@ def _parse_price_cents_from_form(value: str | None) -> int:
     return validate_amount_cents(int(cents))
 
 
+def _stripe_obj_value(obj, key: str, default=None):
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _stripe_metadata_value(obj, key: str, default: str = "") -> str:
+    metadata = _stripe_obj_value(obj, "metadata", {}) or {}
+    if isinstance(metadata, dict):
+        value = metadata.get(key, default)
+    elif hasattr(metadata, "get"):
+        value = metadata.get(key, default)
+    else:
+        value = getattr(metadata, key, default)
+    return str(value) if value not in (None, "") else default
+
+
+def _format_stripe_timestamp(created) -> str:
+    try:
+        created_int = int(created)
+    except (TypeError, ValueError):
+        return "-"
+    return datetime.fromtimestamp(created_int, tz=timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+
+
+def _format_stripe_date(created) -> str:
+    try:
+        created_int = int(created)
+    except (TypeError, ValueError):
+        return "-"
+    return datetime.fromtimestamp(created_int, tz=timezone.utc).strftime("%d.%m.%Y")
+
+
+def _stripe_payout_label(status: str | None) -> str:
+    labels = {
+        "paid": "ausgezahlt",
+        "pending": "Auszahlung ausstehend",
+        "in_transit": "Auszahlung unterwegs",
+        "canceled": "Auszahlung storniert",
+        "failed": "Auszahlung fehlgeschlagen",
+    }
+    return labels.get(status or "", status or "Auszahlung unbekannt")
+
+
+def _latest_charge_for_intent(intent):
+    charge = _stripe_obj_value(intent, "latest_charge")
+    if isinstance(charge, str) and charge:
+        return stripe.Charge.retrieve(charge)
+    charges = _stripe_obj_value(intent, "charges")
+    charge_data = _stripe_obj_value(charges, "data", []) if charges else []
+    if not charge and charge_data:
+        return charge_data[0]
+    return charge
+
+
+def _balance_transaction_for_charge(charge):
+    balance_transaction = _stripe_obj_value(charge, "balance_transaction")
+    if isinstance(balance_transaction, str) and balance_transaction:
+        return stripe.BalanceTransaction.retrieve(balance_transaction)
+    return balance_transaction
+
+
+def _payout_for_balance_transaction(balance_transaction, payout_cache: dict | None = None):
+    payout = _stripe_obj_value(balance_transaction, "payout")
+    if isinstance(payout, str) and payout:
+        if payout_cache is not None and payout in payout_cache:
+            return payout_cache[payout]
+        retrieved = stripe.Payout.retrieve(payout)
+        if payout_cache is not None:
+            payout_cache[payout] = retrieved
+        return retrieved
+    return payout
+
+
+def _payout_status_for_payment(charge, payout_cache: dict | None = None) -> tuple[str, str]:
+    balance_transaction = _balance_transaction_for_charge(charge)
+    if not balance_transaction:
+        return "Auszahlung unbekannt", "keine Balance-Transaction"
+
+    payout = _payout_for_balance_transaction(balance_transaction, payout_cache=payout_cache)
+    if payout:
+        status = _stripe_obj_value(payout, "status")
+        payout_id = _stripe_obj_value(payout, "id", "")
+        arrival_date = _format_stripe_date(_stripe_obj_value(payout, "arrival_date"))
+        detail = payout_id
+        if arrival_date != "-":
+            detail = f"{detail} / Ankunft {arrival_date}" if detail else f"Ankunft {arrival_date}"
+        return _stripe_payout_label(status), detail
+
+    balance_status = _stripe_obj_value(balance_transaction, "status")
+    available_on = _format_stripe_date(_stripe_obj_value(balance_transaction, "available_on"))
+    if balance_status == "pending":
+        return "noch nicht auszahlbar", f"verfuegbar ab {available_on}"
+    if balance_status == "available":
+        return "noch nicht ausgezahlt", f"verfuegbar seit {available_on}"
+    return "noch nicht ausgezahlt", balance_status or "kein Payout verknuepft"
+
+
+def _payment_intent_to_admin_payment(
+    intent,
+    payout_cache: dict | None = None,
+    include_payout_status: bool = True,
+) -> dict:
+    charge = _latest_charge_for_intent(intent)
+    amount_cents = int(_stripe_obj_value(charge, "amount", _stripe_obj_value(intent, "amount", 0)) or 0)
+    amount_refunded_cents = int(_stripe_obj_value(charge, "amount_refunded", 0) or 0)
+    refundable_cents = max(amount_cents - amount_refunded_cents, 0)
+    currency = str(_stripe_obj_value(intent, "currency", _stripe_obj_value(charge, "currency", "eur")) or "eur")
+    payout_label = "-"
+    payout_detail = ""
+    if include_payout_status:
+        payout_label, payout_detail = _payout_status_for_payment(charge, payout_cache=payout_cache)
+
+    return {
+        "id": _stripe_obj_value(intent, "id", ""),
+        "created_label": _format_stripe_timestamp(_stripe_obj_value(intent, "created")),
+        "item": _stripe_metadata_value(intent, "item", "-"),
+        "cashier": _stripe_metadata_value(intent, "kassierer", "-"),
+        "device": _stripe_metadata_value(intent, "device", "-"),
+        "amount_cents": amount_cents,
+        "amount_refunded_cents": amount_refunded_cents,
+        "refundable_cents": refundable_cents,
+        "currency": currency.upper(),
+        "status": _stripe_obj_value(intent, "status", "-"),
+        "receipt_url": _stripe_obj_value(charge, "receipt_url"),
+        "charge_id": _stripe_obj_value(charge, "id", ""),
+        "refunded": bool(_stripe_obj_value(charge, "refunded", False)) or refundable_cents == 0,
+        "payout_label": payout_label,
+        "payout_detail": payout_detail,
+    }
+
+
+def _list_successful_admin_payments() -> list[dict]:
+    intents = stripe.PaymentIntent.list(
+        limit=100,
+        expand=["data.latest_charge", "data.latest_charge.balance_transaction"],
+    )
+    payments = []
+    payout_cache = {}
+    for intent in _stripe_obj_value(intents, "data", []) or []:
+        if _stripe_obj_value(intent, "status") != "succeeded":
+            continue
+        club = _stripe_metadata_value(intent, "club")
+        if club and club != "DARC e.V. OV L11":
+            continue
+        payments.append(_payment_intent_to_admin_payment(intent, payout_cache=payout_cache))
+    return payments
+
+
+def _parse_optional_refund_cents(value: str | None) -> int | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _parse_price_cents_from_form(value)
+
+
+def _refund_payment_intent(payment_intent_id: str | None, refund_amount: str | None) -> int:
+    if not isinstance(payment_intent_id, str) or not payment_intent_id.strip():
+        raise APIError("payment_intent_id ist erforderlich", 400)
+    intent = stripe.PaymentIntent.retrieve(payment_intent_id.strip(), expand=["latest_charge"])
+    if _stripe_obj_value(intent, "status") != "succeeded":
+        raise APIError("Nur erfolgreiche Zahlungen koennen erstattet werden", 400)
+
+    payment = _payment_intent_to_admin_payment(intent, include_payout_status=False)
+    refundable_cents = payment["refundable_cents"]
+    if refundable_cents <= 0:
+        raise APIError("Diese Zahlung ist bereits voll erstattet", 400)
+
+    requested_cents = _parse_optional_refund_cents(refund_amount) or refundable_cents
+    if requested_cents > refundable_cents:
+        raise APIError("Rueckerstattung darf den offenen Betrag nicht ueberschreiten", 400)
+
+    stripe.Refund.create(
+        payment_intent=payment["id"],
+        amount=requested_cents,
+        reason="requested_by_customer",
+        metadata={"refunded_by": "club-payment-admin"},
+    )
+    return requested_cents
+
+
 def _resolve_terminal_location_id() -> str:
     configured_location_id = (STRIPE_LOCATION_ID or "").strip()
     if configured_location_id:
@@ -162,6 +345,28 @@ def _render_admin_products(admin_user, error_message: str | None = None):
         products=list(store.list_products()),
         format_price_euros=_format_price_euros,
         error_message=error_message,
+    )
+
+
+def _render_admin_payments(
+    admin_user,
+    error_message: str | None = None,
+    success_message: str | None = None,
+):
+    payments = []
+    try:
+        payments = _list_successful_admin_payments()
+    except stripe.error.StripeError as err:
+        logger.warning("Could not load Stripe payments for admin page: %s", err)
+        error_message = error_message or "Zahlungen konnten nicht von Stripe geladen werden"
+
+    return render_template(
+        "admin_payments.html",
+        admin_name=_user_identifier(admin_user),
+        payments=payments,
+        format_price_euros=_format_price_euros,
+        error_message=error_message,
+        success_message=success_message,
     )
 
 
@@ -615,6 +820,40 @@ def admin_web_products():
             error_message = str(err)
 
     return _render_admin_products(admin_user, error_message=error_message)
+
+
+@app.route("/admin/web/payments", methods=["GET", "POST"])
+def admin_web_payments():
+    admin_user = _get_admin_user_from_session()
+    if not admin_user:
+        return redirect(url_for("admin_web_login"))
+
+    error_message = None
+    success_message = session.pop("admin_payments_success", None)
+    if request.method == "POST":
+        action = request.form.get("action")
+        try:
+            if action != "refund":
+                raise APIError("Unbekannte Aktion", 400)
+            refunded_cents = _refund_payment_intent(
+                request.form.get("payment_intent_id"),
+                request.form.get("refund_amount"),
+            )
+            session["admin_payments_success"] = (
+                f"{_format_price_euros(refunded_cents)} EUR wurden erstattet."
+            )
+            return redirect(url_for("admin_web_payments"))
+        except APIError as err:
+            error_message = str(err)
+        except stripe.error.StripeError as err:
+            logger.warning("Stripe refund failed: %s", err)
+            error_message = "Rueckerstattung konnte bei Stripe nicht erstellt werden"
+
+    return _render_admin_payments(
+        admin_user,
+        error_message=error_message,
+        success_message=success_message,
+    )
 
 
 @app.route("/admin/users", methods=["GET"])
