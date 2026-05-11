@@ -58,6 +58,11 @@ sealed class PaymentStatus {
     data class Error(val message: String) : PaymentStatus()
 }
 
+private const val MissingLocationIdMessage =
+    "Stripe-Location-ID konnte nicht geladen werden. Bitte im Server eine Terminal-Location konfigurieren."
+
+internal fun normalizeStripeLocationId(value: String?): String = value.orEmpty().trim()
+
 class TerminalManager(private val context: Context, private val backendService: BackendService) {
     private var cachedLocationId: String? = null
 
@@ -177,7 +182,7 @@ class TerminalManager(private val context: Context, private val backendService: 
         ensureInitialized()
         val locationId = resolveTerminalLocationId()
         if (locationId.isBlank()) {
-            throw IllegalStateException("Stripe-Location-ID fehlt; bitte im Server eine Terminal-Location konfigurieren")
+            throw IllegalStateException(MissingLocationIdMessage)
         }
         return suspendCancellableCoroutine { cont ->
             Terminal.getInstance().connectLocalMobileReader(
@@ -197,12 +202,15 @@ class TerminalManager(private val context: Context, private val backendService: 
     }
 
     private suspend fun resolveTerminalLocationId(): String {
-        val buildLocationId = BuildConfig.LOCATION_ID.trim()
+        val buildLocationId = normalizeStripeLocationId(BuildConfig.LOCATION_ID)
         if (buildLocationId.isNotBlank()) {
             return buildLocationId
         }
         cachedLocationId?.takeIf { it.isNotBlank() }?.let { return it }
-        val serverLocationId = backendService.getTerminalConfig().location_id.trim()
+        val serverLocationId = normalizeStripeLocationId(backendService.getTerminalConfig().location_id)
+        if (serverLocationId.isBlank()) {
+            throw IllegalStateException(MissingLocationIdMessage)
+        }
         cachedLocationId = serverLocationId
         return serverLocationId
     }

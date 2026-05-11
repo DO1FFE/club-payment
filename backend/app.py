@@ -106,15 +106,19 @@ def _resolve_terminal_location_id() -> str:
 
     try:
         locations = stripe.terminal.Location.list(limit=1)
-        if getattr(locations, "data", None):
-            return locations.data[0].id
+        for location in getattr(locations, "data", None) or []:
+            location_id = (getattr(location, "id", None) or "").strip()
+            if location_id:
+                return location_id
 
         if STRIPE_SECRET_KEY.startswith("sk_test_"):
             location = stripe.terminal.Location.create(
                 display_name=STRIPE_LOCATION_DISPLAY_NAME,
                 address=STRIPE_LOCATION_ADDRESS,
             )
-            return location.id
+            location_id = (getattr(location, "id", None) or "").strip()
+            if location_id:
+                return location_id
     except stripe.error.StripeError as err:
         logger.warning("Could not resolve Stripe Terminal location: %s", err)
         raise APIError("Stripe Terminal Location konnte nicht geladen werden", 502)
