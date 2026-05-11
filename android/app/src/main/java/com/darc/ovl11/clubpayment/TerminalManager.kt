@@ -59,7 +59,7 @@ sealed class PaymentStatus {
 }
 
 private const val MissingLocationIdMessage =
-    "Stripe-Location-ID konnte nicht geladen werden. Bitte im Server eine Terminal-Location konfigurieren."
+    "Stripe-Location-ID konnte vom Server nicht geladen werden. Bitte pruefen, ob der Stripe Secret Key Terminal-Locations lesen oder anlegen darf."
 
 internal fun normalizeStripeLocationId(value: String?): String = value.orEmpty().trim()
 

@@ -94,7 +94,7 @@ def test_terminal_config_uses_existing_stripe_location(client, monkeypatch):
         data = [DummyLocation()]
 
     def fake_list(limit):
-        assert limit == 1
+        assert limit == 100
         return DummyLocations()
 
     monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
@@ -108,7 +108,7 @@ def test_terminal_config_uses_existing_stripe_location(client, monkeypatch):
     assert response.get_json() == {"location_id": "tml_existing"}
 
 
-def test_terminal_config_creates_test_location_when_missing(client, monkeypatch):
+def test_terminal_config_creates_location_when_missing(client, monkeypatch):
     test_client, app_module = client
     monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "")
 
@@ -124,6 +124,7 @@ def test_terminal_config_creates_test_location_when_missing(client, monkeypatch)
     def fake_create(**kwargs):
         assert kwargs["display_name"] == "DARC OV L11 Club Kasse"
         assert kwargs["address"]["country"] == "DE"
+        assert kwargs["metadata"]["created_by"] == "club-payment-backend"
         return DummyLocation()
 
     monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
@@ -138,7 +139,7 @@ def test_terminal_config_creates_test_location_when_missing(client, monkeypatch)
     assert response.get_json() == {"location_id": "tml_created"}
 
 
-def test_terminal_config_rejects_empty_stripe_location(client, monkeypatch):
+def test_terminal_config_creates_location_after_empty_stripe_location(client, monkeypatch):
     test_client, app_module = client
     monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "")
     monkeypatch.setattr(app_module, "STRIPE_SECRET_KEY", "sk_live_dummy")
@@ -149,11 +150,48 @@ def test_terminal_config_rejects_empty_stripe_location(client, monkeypatch):
     class DummyLocations:
         data = [DummyLocation()]
 
+    class CreatedLocation:
+        id = "tml_created_live"
+
     def fake_list(limit):
-        assert limit == 1
+        assert limit == 100
         return DummyLocations()
 
+    def fake_create(**kwargs):
+        assert kwargs["display_name"] == "DARC OV L11 Club Kasse"
+        return CreatedLocation()
+
     monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
+    monkeypatch.setattr(app_module.stripe.terminal.Location, "create", staticmethod(fake_create))
+
+    response = test_client.get(
+        "/terminal/config",
+        headers={"Authorization": "Bearer admin-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"location_id": "tml_created_live"}
+
+
+def test_terminal_config_rejects_empty_created_location(client, monkeypatch):
+    test_client, app_module = client
+    monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "")
+
+    class EmptyLocations:
+        data = []
+
+    class CreatedLocation:
+        id = None
+
+    def fake_list(limit):
+        assert limit == 100
+        return EmptyLocations()
+
+    def fake_create(**kwargs):
+        return CreatedLocation()
+
+    monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
+    monkeypatch.setattr(app_module.stripe.terminal.Location, "create", staticmethod(fake_create))
 
     response = test_client.get(
         "/terminal/config",
@@ -161,7 +199,7 @@ def test_terminal_config_rejects_empty_stripe_location(client, monkeypatch):
     )
 
     assert response.status_code == 400
-    assert "Keine Stripe Terminal Location gefunden" in response.get_json()["error"]
+    assert "automatisch angelegt" in response.get_json()["error"]
 
 
 def test_create_payment_intent_success(client, monkeypatch):
