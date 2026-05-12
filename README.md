@@ -2,7 +2,7 @@
 
 Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für eine einfache Getränke-Kasse.
 
-Version 1.0.13 - © 2026 Erik Schauer, do1ffe@darc.de
+Version 1.0.14 - © 2026 Erik Schauer, do1ffe@darc.de
 
 ## Voraussetzungen
 
@@ -80,13 +80,14 @@ Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine
 ### Artefakte
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Release APK: `android/app/build/outputs/apk/release/app-release.apk`
-- Signierte PR-APK: `artifacts/club-payment-1.0.13-release-signed.apk`
+- Signierte PR-APK: `artifacts/club-payment-1.0.14-release-signed.apk`
 - AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
 
 ## Hinweise zu Netzwerk & Sicherheit
 - Network Security Config erlaubt Klartext nur für lokale Emulator-Tests über `10.0.2.2/localhost`; die produktive Server-URL nutzt HTTPS.
 - R8/ProGuard ist für Release aktiviert; Stripe Terminal-Klassen werden per Rule erhalten.
 - Tap to Pay Flow ist nativ ueber das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present, NFC direkt am Android-Handy).
+- NFC, Standort-Hardware und WLAN sind keine Installationsfilter mehr. Geraete ohne NFC koennen die App starten, erhalten aber einen Hinweis und koennen keine Tap-to-Pay-Zahlungen annehmen. Android 11 oder neuer bleibt erforderlich.
 - Auth-Persistenz-Entscheidung (Android): Bei aktivierter Option `Zugangsdaten merken` werden Benutzername und Passwort lokal in der App gespeichert und beim naechsten Login vorausgefuellt. Beim Abmelden bleibt diese Vorbelegung erhalten; Login ohne aktivierte Option loescht sie.
 
 ## Stripe-Sprache fuer Belege
