@@ -12,7 +12,6 @@ def app_module(monkeypatch, tmp_path):
     monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost")
     monkeypatch.setenv("ADMIN_API_TOKEN", "admin-token")
     monkeypatch.setenv("ADMIN_NAME", "Admin Nutzer")
-    monkeypatch.setenv("ADMIN_ROLE", "ov_admin")
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "admin-passwort")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'test.sqlite3'}")
@@ -24,24 +23,14 @@ def app_module(monkeypatch, tmp_path):
     import app as app
     import database as database
     import device_registry as device_registry
-    import organizations as organizations
     import products as products
-    import stripe_platform as stripe_platform
     import users as users
 
     importlib.reload(database)
-    importlib.reload(organizations)
     importlib.reload(users)
     importlib.reload(device_registry)
     importlib.reload(products)
-    importlib.reload(stripe_platform)
     importlib.reload(app)
-    default_organization = app.get_organization_store().ensure_default_organization()
-    app.get_organization_store().update_organization(
-        organization_id=default_organization.id,
-        stripe_connect_account_id="acct_test_l11",
-        stripe_connect_onboarding_complete=True,
-    )
     return app
 
 
@@ -62,10 +51,10 @@ def test_landing_page_links_latest_apk(client, monkeypatch, tmp_path):
 
     assert response.status_code == 200
     page = response.get_data(as_text=True)
-    assert "Kassivo" in page
+    assert "Club Kasse" in page
     assert "Android-App herunterladen" in page
     assert "Version 1.0.15" in page
-    assert "Version 1.0.16 - &copy;" in page
+    assert "Version 1.0.15 - &copy;" in page
     assert "/apk/latest" in page
 
 
@@ -128,23 +117,9 @@ def test_connection_token_success(client, monkeypatch):
         def __init__(self, secret: str):
             self.secret = secret
 
-    class DummyLocation:
-        id = "tml_existing"
-
-    class DummyLocations:
-        data = [DummyLocation()]
-
-    def fake_list(**kwargs):
-        assert kwargs["limit"] == 100
-        assert kwargs["stripe_account"] == "acct_test_l11"
-        return DummyLocations()
-
-    def fake_create(**kwargs):
-        assert kwargs["location"] == "tml_existing"
-        assert kwargs["stripe_account"] == "acct_test_l11"
+    def fake_create():
         return DummyToken("token_secret")
 
-    monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
     monkeypatch.setattr(app_module.stripe.terminal.ConnectionToken, "create", staticmethod(fake_create))
 
     response = test_client.post(
@@ -162,72 +137,6 @@ def test_connection_token_requires_auth(client):
 
     assert response.status_code == 401
     assert response.get_json()["error"] == "Authorization-Header fehlt"
-
-
-def test_calculate_application_fee_cents(app_module):
-    assert app_module.calculate_application_fee_cents(150, 100) == 2
-    assert app_module.calculate_application_fee_cents(1000, 100) == 10
-    assert app_module.calculate_application_fee_cents(1000, 0) == 0
-    assert app_module.calculate_application_fee_cents(50, 100) == 1
-
-
-def test_products_are_filtered_by_organization(client):
-    _, app_module = client
-    organization_store = app_module.get_organization_store()
-    l11 = organization_store.ensure_default_organization()
-    l20 = organization_store.create_organization(name="DARC e.V. OV Test", dok="L20", slug="l20")
-
-    product_store = app_module.get_product_store()
-    product_store.create_product(name="L11 Cola", price_cents=150, organization_id=l11.id)
-    product_store.create_product(name="L20 Wasser", price_cents=100, organization_id=l20.id)
-
-    l11_products = list(product_store.list_products(l11.id))
-    l20_products = list(product_store.list_products(l20.id))
-
-    assert any(product.name == "L11 Cola" for product in l11_products)
-    assert all(product.name != "L20 Wasser" for product in l11_products)
-    assert any(product.name == "L20 Wasser" for product in l20_products)
-
-
-def test_device_assignments_are_filtered_by_organization(client):
-    _, app_module = client
-    organization_store = app_module.get_organization_store()
-    l20 = organization_store.create_organization(name="DARC e.V. OV Test", dok="L20", slug="l20")
-    store = app_module.get_user_store()
-    user = store.create_user(
-        name="l20-kasse",
-        role=app_module.Role.KASSIERER,
-        active=True,
-        username="l20-kasse",
-        password_hash=store.hash_password("passwort"),
-        organization_id=l20.id,
-    )
-
-    registry = app_module.get_device_registry()
-    registry.assign_device("l20-phone", user.id, l20.id)
-
-    assert registry.get_device("l20-phone", l20.id) is not None
-    assert registry.get_device("l20-phone", 1) is None
-
-
-def test_cashier_cannot_create_users(client):
-    test_client, app_module = client
-    store = app_module.get_user_store()
-    cashier = store.create_user(
-        name="nur-kasse",
-        role=app_module.Role.KASSIERER,
-        active=True,
-        username="nur-kasse",
-        password_hash=store.hash_password("passwort"),
-    )
-
-    response = test_client.post(
-        "/admin/users",
-        json={"role": "kassierer", "username": "nein", "password": "passwort"},
-        headers={"Authorization": f"Bearer {cashier.api_token}"},
-    )
-
-    assert response.status_code == 403
 
 
 def test_terminal_config_uses_configured_location(client, monkeypatch):
@@ -253,9 +162,8 @@ def test_terminal_config_uses_existing_stripe_location(client, monkeypatch):
     class DummyLocations:
         data = [DummyLocation()]
 
-    def fake_list(**kwargs):
-        assert kwargs["limit"] == 100
-        assert kwargs["stripe_account"] == "acct_test_l11"
+    def fake_list(limit):
+        assert limit == 100
         return DummyLocations()
 
     monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
@@ -279,15 +187,13 @@ def test_terminal_config_creates_location_when_missing(client, monkeypatch):
     class DummyLocation:
         id = "tml_created"
 
-    def fake_list(**kwargs):
-        assert kwargs["stripe_account"] == "acct_test_l11"
+    def fake_list(limit):
         return EmptyLocations()
 
     def fake_create(**kwargs):
-        assert kwargs["display_name"] == "L11 Kassivo"
+        assert kwargs["display_name"] == "DARC OV L11 Club Kasse"
         assert kwargs["address"]["country"] == "DE"
-        assert kwargs["metadata"]["platform"] == "kassivo"
-        assert kwargs["stripe_account"] == "acct_test_l11"
+        assert kwargs["metadata"]["created_by"] == "club-payment-backend"
         return DummyLocation()
 
     monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
@@ -305,6 +211,7 @@ def test_terminal_config_creates_location_when_missing(client, monkeypatch):
 def test_terminal_config_creates_location_after_empty_stripe_location(client, monkeypatch):
     test_client, app_module = client
     monkeypatch.setattr(app_module, "STRIPE_LOCATION_ID", "")
+    monkeypatch.setattr(app_module, "STRIPE_SECRET_KEY", "sk_live_dummy")
 
     class DummyLocation:
         id = None
@@ -315,14 +222,12 @@ def test_terminal_config_creates_location_after_empty_stripe_location(client, mo
     class CreatedLocation:
         id = "tml_created_live"
 
-    def fake_list(**kwargs):
-        assert kwargs["limit"] == 100
-        assert kwargs["stripe_account"] == "acct_test_l11"
+    def fake_list(limit):
+        assert limit == 100
         return DummyLocations()
 
     def fake_create(**kwargs):
-        assert kwargs["display_name"] == "L11 Kassivo"
-        assert kwargs["stripe_account"] == "acct_test_l11"
+        assert kwargs["display_name"] == "DARC OV L11 Club Kasse"
         return CreatedLocation()
 
     monkeypatch.setattr(app_module.stripe.terminal.Location, "list", staticmethod(fake_list))
@@ -347,9 +252,8 @@ def test_terminal_config_rejects_empty_created_location(client, monkeypatch):
     class CreatedLocation:
         id = None
 
-    def fake_list(**kwargs):
-        assert kwargs["limit"] == 100
-        assert kwargs["stripe_account"] == "acct_test_l11"
+    def fake_list(limit):
+        assert limit == 100
         return EmptyLocations()
 
     def fake_create(**kwargs):
@@ -389,10 +293,7 @@ def test_create_payment_intent_success(client, monkeypatch):
         assert kwargs["metadata"]["item"] == "Cola"
         assert kwargs["metadata"]["kassierer"] == "admin"
         assert kwargs["metadata"]["user_id"] == "1"
-        assert kwargs["metadata"]["role"] == "ov_admin"
-        assert kwargs["metadata"]["organization_slug"] == "l11"
-        assert kwargs["application_fee_amount"] == 5
-        assert kwargs["stripe_account"] == "acct_test_l11"
+        assert kwargs["metadata"]["role"] == "admin"
         assert kwargs["metadata"]["device"] == "device1"
         return DummyIntent()
 
@@ -444,10 +345,9 @@ def test_get_receipt_returns_stripe_receipt_url(client, monkeypatch):
     class DummyIntent:
         latest_charge = DummyCharge()
 
-    def fake_retrieve(payment_intent_id, **kwargs):
+    def fake_retrieve(payment_intent_id, expand):
         assert payment_intent_id == "pi_paid"
-        assert "latest_charge" in kwargs["expand"]
-        assert kwargs["stripe_account"] == "acct_test_l11"
+        assert "latest_charge" in expand
         return DummyIntent()
 
     monkeypatch.setattr(app_module.stripe.PaymentIntent, "retrieve", staticmethod(fake_retrieve))
@@ -471,8 +371,7 @@ def test_get_receipt_without_charge_returns_404(client, monkeypatch):
         latest_charge = None
         charges = DummyCharges()
 
-    def fake_retrieve(payment_intent_id, **kwargs):
-        assert kwargs["stripe_account"] == "acct_test_l11"
+    def fake_retrieve(payment_intent_id, expand):
         return DummyIntent()
 
     monkeypatch.setattr(app_module.stripe.PaymentIntent, "retrieve", staticmethod(fake_retrieve))
@@ -601,12 +500,7 @@ def test_login_success(client):
     )
 
     assert response.status_code == 200
-    payload = response.get_json()
-    assert payload["token"] == "admin-token"
-    assert payload["display_name"] == "admin"
-    assert payload["device_pending"] is False
-    assert payload["organization"]["slug"] == "l11"
-    assert payload["stripe_ready"] is True
+    assert response.get_json() == {"token": "admin-token", "display_name": "admin", "device_pending": False}
 
 
 def test_login_remembers_unassigned_device_for_admin_assignment(client):
@@ -821,7 +715,7 @@ def test_interactive_admin_bootstrap_when_no_users(monkeypatch, tmp_path):
     admin = store.get_by_username("erstadmin")
 
     assert admin is not None
-    assert admin.role == users.Role.SYSTEM_ADMIN
+    assert admin.role == users.Role.ADMIN
     assert admin.active is True
     assert admin.name == "Erster Admin"
 
@@ -854,7 +748,7 @@ def test_no_interactive_bootstrap_when_admin_exists(monkeypatch, tmp_path):
     admin = store.get_by_username("admin")
 
     assert admin is not None
-    assert admin.role == users.Role.SYSTEM_ADMIN
+    assert admin.role == users.Role.ADMIN
     assert called["interactive"] is False
 
 
@@ -1326,9 +1220,9 @@ def test_admin_web_payments_page_lists_successful_payments(client, monkeypatch):
     monkeypatch.setattr(
         app_module.stripe.BalanceTransaction,
         "retrieve",
-        staticmethod(lambda balance_transaction_id, **kwargs: DummyBalanceTransaction()),
+        staticmethod(lambda balance_transaction_id: DummyBalanceTransaction()),
     )
-    monkeypatch.setattr(app_module.stripe.Payout, "retrieve", staticmethod(lambda payout_id, **kwargs: DummyPayout()))
+    monkeypatch.setattr(app_module.stripe.Payout, "retrieve", staticmethod(lambda payout_id: DummyPayout()))
 
     response = test_client.get("/admin/web/payments")
 
@@ -1397,12 +1291,12 @@ def test_admin_web_payments_refund_success(client, monkeypatch):
     )
 
     assert response.status_code == 200
-    assert created_refund["payment_intent"] == "pi_paid"
-    assert created_refund["amount"] == 400
-    assert created_refund["reason"] == "requested_by_customer"
-    assert created_refund["metadata"]["refunded_by"] == "kassivo-admin"
-    assert created_refund["metadata"]["organization_slug"] == "l11"
-    assert created_refund["stripe_account"] == "acct_test_l11"
+    assert created_refund == {
+        "payment_intent": "pi_paid",
+        "amount": 400,
+        "reason": "requested_by_customer",
+        "metadata": {"refunded_by": "club-payment-admin"},
+    }
     assert "4,00 EUR wurden erstattet." in response.get_data(as_text=True)
 
 
