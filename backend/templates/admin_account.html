@@ -3,23 +3,20 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ app_name }} Konto</title>
+    <title>Konto</title>
     <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="{{ url_for('admin_system_organizations' if is_system_admin else ('admin_web_users' if is_admin else 'admin_web_payments')) }}">
+      <a class="brand" href="{{ url_for('admin_web_users' if is_admin else 'admin_web_payments') }}">
         <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
-        <span>{{ app_name }}</span>
+        <span>Club Payment</span>
       </a>
       <nav class="nav">
-        {% if is_system_admin %}
-        <a class="nav-link" href="{{ url_for('admin_system_organizations') }}">OVs</a>
-        {% elif is_admin %}
+        {% if is_admin %}
         <a class="nav-link" href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
         <a class="nav-link" href="{{ url_for('admin_web_products') }}">Produkte</a>
-        <a class="nav-link" href="{{ url_for('admin_web_stripe') }}">Stripe</a>
         {% endif %}
         <a class="nav-link" href="{{ url_for('admin_web_payments') }}">Zahlungen</a>
         <a class="nav-link active" href="{{ url_for('admin_web_account') }}">Konto</a>
