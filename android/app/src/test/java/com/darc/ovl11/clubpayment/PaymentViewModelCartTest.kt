@@ -162,4 +162,11 @@ class PaymentViewModelCartTest {
         assertFalse(canShowAppUpdateDialog(PaymentStatus.Processing))
         assertFalse(canShowAppUpdateDialog(PaymentStatus.Error("Fehler")))
     }
+
+    @Test
+    fun `shouldRunAppUpdateCheck wartet auf login token`() {
+        assertFalse(shouldRunAppUpdateCheck(null))
+        assertFalse(shouldRunAppUpdateCheck(AuthData(token = "", userName = "DO1FFE")))
+        assertTrue(shouldRunAppUpdateCheck(AuthData(token = "token", userName = "DO1FFE")))
+    }
 }
