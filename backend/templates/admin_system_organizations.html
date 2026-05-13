@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ app_name }} System</title>
+    <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('admin_system_organizations') }}">
+        <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
+        <span>{{ app_name }}</span>
+      </a>
+      <nav class="nav">
+        <a class="nav-link active" href="{{ url_for('admin_system_organizations') }}">OVs</a>
+        <a class="nav-link" href="{{ url_for('admin_web_account') }}">Konto</a>
+      </nav>
+      <form method="post" action="{{ url_for('admin_web_logout') }}">
+        <button class="secondary" type="submit">Abmelden</button>
+      </form>
+    </header>
+
+    <main class="page">
+      <section class="page-heading">
+        <p class="eyebrow">Angemeldet als {{ admin_name }} &middot; System-Admin</p>
+        <h1>Ortsverbaende</h1>
+      </section>
+
+      <section class="panel">
+        <div class="section-actions">
+          <h2>Mandanten</h2>
+          <a class="button-link" href="{{ url_for('admin_system_organization_new') }}">OV anlegen</a>
+        </div>
+        <p class="muted">
+          Die Plattform kann eine vom Betreiber festgelegte Plattformgebuehr pro Zahlung einbehalten.
+          Diese wird ueber Stripe Connect als Application Fee verarbeitet und ist fuer den jeweiligen OV sichtbar.
+        </p>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr>
+                <th>DOK</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Stripe</th>
+                <th>Gebuehr</th>
+                <th>Aktion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for organization in organizations %}
+              <tr>
+                <td data-label="DOK"><strong>{{ organization.dok }}</strong></td>
+                <td data-label="Name">{{ organization.name }}<span class="muted payment-id">{{ organization.slug }}</span></td>
+                <td data-label="Status">{{ 'aktiv' if organization.active else 'deaktiviert' }}</td>
+                <td data-label="Stripe">
+                  {% if organization.stripe_connect_account_id %}
+                  verbunden
+                  {% else %}
+                  nicht verbunden
+                  {% endif %}
+                </td>
+                <td data-label="Gebuehr">{{ format_basis_points(organization.platform_fee_basis_points) }}</td>
+                <td data-label="Aktion">
+                  <a class="secondary-link" href="{{ url_for('admin_system_organization_edit', slug=organization.slug) }}">Bearbeiten</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    {% include "_footer.html" %}
+  </body>
+</html>
