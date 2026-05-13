@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ app_name }} Stripe</title>
+    <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('admin_web_users') }}">
+        <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
+        <span>{{ app_name }}</span>
+      </a>
+      <nav class="nav">
+        <a class="nav-link" href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
+        <a class="nav-link" href="{{ url_for('admin_web_products') }}">Produkte</a>
+        <a class="nav-link" href="{{ url_for('admin_web_payments') }}">Zahlungen</a>
+        <a class="nav-link active" href="{{ url_for('admin_web_stripe') }}">Stripe</a>
+        <a class="nav-link" href="{{ url_for('admin_web_account') }}">Konto</a>
+      </nav>
+      <form method="post" action="{{ url_for('admin_web_logout') }}">
+        <button class="secondary" type="submit">Abmelden</button>
+      </form>
+    </header>
+
+    <main class="page">
+      <section class="page-heading">
+        <p class="eyebrow">Angemeldet als {{ admin_name }} &middot; {{ organization.dok }}</p>
+        <h1>Stripe Connect</h1>
+      </section>
+
+      <section class="panel">
+        <h2>{{ organization.name }}</h2>
+        <p class="empty-state">
+          Fuer diesen OV ist eine Plattformgebuehr von
+          <strong>{{ format_basis_points(organization.platform_fee_basis_points) }}</strong> aktiv.
+          Die Gebuehr wird transparent ueber Stripe Connect als Application Fee verarbeitet.
+        </p>
+
+        <div class="status-grid">
+          <div>
+            <span class="muted">Connect-Konto</span>
+            <strong>{{ 'verbunden' if organization.stripe_connect_account_id else 'nicht verbunden' }}</strong>
+          </div>
+          <div>
+            <span class="muted">Zahlungen</span>
+            <strong>{{ 'bereit' if stripe_ready else 'noch nicht bereit' }}</strong>
+          </div>
+          <div>
+            <span class="muted">Terminal Location</span>
+            <strong>{{ organization.stripe_location_id or 'wird automatisch erstellt' }}</strong>
+          </div>
+        </div>
+
+        <form class="inline-form" method="post" action="{{ url_for('admin_web_stripe_onboarding') }}">
+          <button type="submit">{{ 'Onboarding fortsetzen' if organization.stripe_connect_account_id else 'Stripe verbinden' }}</button>
+        </form>
+      </section>
+    </main>
+    {% include "_footer.html" %}
+  </body>
+</html>

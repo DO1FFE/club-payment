@@ -482,8 +482,8 @@ fun LoginScreen(
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             BrandHeader(
-                title = "Club Kasse",
-                subtitle = "DARC OV L11",
+                title = "Kassivo",
+                subtitle = "DARC OVs",
                 detail = "Kartenzahlung per NFC"
             )
             NfcStatusPanel(
@@ -767,7 +767,7 @@ fun PaymentHeader(userName: String, deviceName: String, onLogout: () -> Unit) {
                     )
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Club Kasse",
+                            text = "Kassivo",
                             color = Color.White,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.ExtraBold,

@@ -12,10 +12,24 @@ from flask_cors import CORS
 import stripe
 
 from auth import authenticate_request
+from database import PaymentLogRecord, SessionLocal
 from device_registry import get_device_registry
 from errors import APIError, handle_errors, validate_amount_cents
+from organizations import Organization, get_organization_store
 from products import get_product_store
 from users import Role, get_user_store
+from stripe_platform import (
+    calculate_application_fee_cents,
+    connected_account_ready,
+    create_account_onboarding_link,
+    create_connected_account_for_organization,
+    create_payment_intent_for_organization,
+    create_terminal_connection_token,
+    get_platform_api_key,
+    get_platform_fee_basis_points,
+    refund_payment_for_organization,
+    resolve_terminal_location_id,
+)
 
 load_dotenv()
 
@@ -32,10 +46,7 @@ if not FLASK_SECRET_KEY:
 app.secret_key = FLASK_SECRET_KEY
 
 # Stripe configuration
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-if not STRIPE_SECRET_KEY:
-    raise RuntimeError("STRIPE_SECRET_KEY is not set. Provide it via environment variable or .env file.")
-stripe.api_key = STRIPE_SECRET_KEY
+stripe.api_key = get_platform_api_key()
 stripe.api_version = "2024-06-20"
 
 # CORS configuration
@@ -44,23 +55,25 @@ allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin
 CORS(app, origins=allowed_origins or "*")
 
 WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-STRIPE_LOCATION_ID = os.getenv("STRIPE_LOCATION_ID") or os.getenv("STRIPE_TERMINAL_LOCATION_ID")
-STRIPE_LOCATION_DISPLAY_NAME = os.getenv("STRIPE_LOCATION_DISPLAY_NAME", "DARC OV L11 Club Kasse")
+APP_NAME = os.getenv("APP_NAME", "Kassivo")
+STRIPE_LOCATION_ID = os.getenv("STRIPE_LOCATION_ID") or os.getenv("STRIPE_TERMINAL_LOCATION_ID") or ""
+STRIPE_LOCATION_DISPLAY_NAME = os.getenv("STRIPE_LOCATION_DISPLAY_NAME", "L11 Kassivo")
 STRIPE_LOCATION_ADDRESS = {
-    "line1": os.getenv("STRIPE_LOCATION_ADDRESS_LINE1", "DARC OV L11"),
+    "line1": os.getenv("STRIPE_LOCATION_ADDRESS_LINE1", "DARC OV"),
     "city": os.getenv("STRIPE_LOCATION_ADDRESS_CITY", "Berlin"),
     "country": os.getenv("STRIPE_LOCATION_ADDRESS_COUNTRY", "DE"),
     "postal_code": os.getenv("STRIPE_LOCATION_ADDRESS_POSTAL_CODE", "10115"),
 }
 APK_DOWNLOAD_DIR = Path(os.getenv("APK_DOWNLOAD_DIR", Path(__file__).resolve().parents[1] / "artifacts"))
-APK_FILENAME_PATTERN = re.compile(r"club-payment-(?P<version>\d+(?:\.\d+)*)-release-signed\.apk$")
-APP_VERSION = os.getenv("APP_VERSION", "1.0.15")
+APK_FILENAME_PATTERN = re.compile(r"(?:club-payment|kassivo)-(?P<version>\d+(?:\.\d+)*)-release-signed\.apk$")
+APP_VERSION = os.getenv("APP_VERSION", "1.0.16")
 
 
 @app.context_processor
 def _template_context() -> dict:
     return {
         "app_version": APP_VERSION,
+        "app_name": APP_NAME,
         "current_year": datetime.now(timezone.utc).year,
     }
 
@@ -71,18 +84,56 @@ def _get_web_user_from_session():
         return None
     store = get_user_store()
     user = store.get_by_id(user_id)
-    if not user or not user.active or user.role not in {Role.ADMIN, Role.KASSIERER}:
+    if not user or not user.active or user.role not in {Role.SYSTEM_ADMIN, Role.OV_ADMIN, Role.KASSIERER}:
         session.pop("admin_user_id", None)
         return None
     return user
 
 
+def _is_system_admin(user) -> bool:
+    return user.role == Role.SYSTEM_ADMIN
+
+
+def _is_ov_admin(user) -> bool:
+    return user.role == Role.OV_ADMIN
+
+
 def _is_admin(user) -> bool:
-    return user.role == Role.ADMIN
+    return user.role in {Role.SYSTEM_ADMIN, Role.OV_ADMIN}
 
 
 def _default_web_endpoint_for_user(user) -> str:
+    if _is_system_admin(user):
+        return "admin_system_organizations"
     return "admin_web_users" if _is_admin(user) else "admin_web_payments"
+
+
+def _organization_payload(organization: Organization | None) -> dict | None:
+    if not organization:
+        return None
+    return {
+        "id": organization.id,
+        "name": organization.name,
+        "dok": organization.dok,
+        "slug": organization.slug,
+    }
+
+
+def _organization_for_user(user, allow_single_system_admin_fallback: bool = True) -> Organization:
+    store = get_organization_store()
+    if user.organization_id is not None:
+        organization = store.get_by_id(user.organization_id)
+        if organization:
+            return organization
+    if allow_single_system_admin_fallback and user.role == Role.SYSTEM_ADMIN:
+        active_organizations = list(store.list_organizations(include_inactive=False))
+        if len(active_organizations) == 1:
+            return active_organizations[0]
+    raise APIError("Dieser Benutzer ist keinem OV zugeordnet", 403)
+
+
+def _organization_for_admin_web(user) -> Organization:
+    return _organization_for_user(user, allow_single_system_admin_fallback=False)
 
 
 def _format_price_euros(price_cents: int) -> str:
@@ -103,7 +154,7 @@ def _latest_apk_info() -> dict | None:
         return None
 
     candidates = []
-    for apk_path in apk_dir.glob("club-payment-*-release-signed.apk"):
+    for apk_path in list(apk_dir.glob("club-payment-*-release-signed.apk")) + list(apk_dir.glob("kassivo-*-release-signed.apk")):
         match = APK_FILENAME_PATTERN.fullmatch(apk_path.name)
         if not match:
             continue
@@ -128,15 +179,15 @@ def _latest_apk_info() -> dict | None:
 
 def _active_admin_count() -> int:
     store = get_user_store()
-    return sum(1 for user in store.list_users() if user.active and user.role == Role.ADMIN)
+    return sum(1 for user in store.list_users() if user.active and user.role == Role.SYSTEM_ADMIN)
 
 
 def _would_remove_last_active_admin(user, role: Role | None = None, active: bool | None = None) -> bool:
     next_role = role if role is not None else user.role
     next_active = active if active is not None else user.active
-    if user.role != Role.ADMIN or not user.active:
+    if user.role != Role.SYSTEM_ADMIN or not user.active:
         return False
-    if next_role == Role.ADMIN and next_active:
+    if next_role == Role.SYSTEM_ADMIN and next_active:
         return False
     return _active_admin_count() <= 1
 
@@ -152,6 +203,22 @@ def _parse_price_cents_from_form(value: str | None) -> int:
     if cents != cents.to_integral_value():
         raise APIError("preis darf hoechstens zwei Nachkommastellen haben", 400)
     return validate_amount_cents(int(cents))
+
+
+def _parse_basis_points_from_form(value: str | None) -> int:
+    if not isinstance(value, str) or not value.strip():
+        return get_platform_fee_basis_points(None)
+    try:
+        basis_points = int(value.strip())
+    except ValueError:
+        raise APIError("Plattformgebuehr muss als Basispunkte angegeben werden", 400)
+    if basis_points < 0 or basis_points > 10_000:
+        raise APIError("Plattformgebuehr muss zwischen 0 und 10000 Basispunkten liegen", 400)
+    return basis_points
+
+
+def _format_basis_points(basis_points: int) -> str:
+    return f"{basis_points / 100:.2f} %".replace(".", ",")
 
 
 def _stripe_obj_value(obj, key: str, default=None):
@@ -200,10 +267,16 @@ def _stripe_payout_label(status: str | None) -> str:
     return labels.get(status or "", status or "Auszahlung unbekannt")
 
 
-def _latest_charge_for_intent(intent):
+def _stripe_account_options(organization: Organization | None = None) -> dict:
+    if organization and organization.stripe_connect_account_id:
+        return {"stripe_account": organization.stripe_connect_account_id}
+    return {}
+
+
+def _latest_charge_for_intent(intent, organization: Organization | None = None):
     charge = _stripe_obj_value(intent, "latest_charge")
     if isinstance(charge, str) and charge:
-        return stripe.Charge.retrieve(charge)
+        return stripe.Charge.retrieve(charge, **_stripe_account_options(organization))
     charges = _stripe_obj_value(intent, "charges")
     charge_data = _stripe_obj_value(charges, "data", []) if charges else []
     if not charge and charge_data:
@@ -211,31 +284,43 @@ def _latest_charge_for_intent(intent):
     return charge
 
 
-def _balance_transaction_for_charge(charge):
+def _balance_transaction_for_charge(charge, organization: Organization | None = None):
     balance_transaction = _stripe_obj_value(charge, "balance_transaction")
     if isinstance(balance_transaction, str) and balance_transaction:
-        return stripe.BalanceTransaction.retrieve(balance_transaction)
+        return stripe.BalanceTransaction.retrieve(balance_transaction, **_stripe_account_options(organization))
     return balance_transaction
 
 
-def _payout_for_balance_transaction(balance_transaction, payout_cache: dict | None = None):
+def _payout_for_balance_transaction(
+    balance_transaction,
+    payout_cache: dict | None = None,
+    organization: Organization | None = None,
+):
     payout = _stripe_obj_value(balance_transaction, "payout")
     if isinstance(payout, str) and payout:
         if payout_cache is not None and payout in payout_cache:
             return payout_cache[payout]
-        retrieved = stripe.Payout.retrieve(payout)
+        retrieved = stripe.Payout.retrieve(payout, **_stripe_account_options(organization))
         if payout_cache is not None:
             payout_cache[payout] = retrieved
         return retrieved
     return payout
 
 
-def _payout_status_for_payment(charge, payout_cache: dict | None = None) -> tuple[str, str]:
-    balance_transaction = _balance_transaction_for_charge(charge)
+def _payout_status_for_payment(
+    charge,
+    payout_cache: dict | None = None,
+    organization: Organization | None = None,
+) -> tuple[str, str]:
+    balance_transaction = _balance_transaction_for_charge(charge, organization=organization)
     if not balance_transaction:
         return "Auszahlung unbekannt", "keine Balance-Transaction"
 
-    payout = _payout_for_balance_transaction(balance_transaction, payout_cache=payout_cache)
+    payout = _payout_for_balance_transaction(
+        balance_transaction,
+        payout_cache=payout_cache,
+        organization=organization,
+    )
     if payout:
         status = _stripe_obj_value(payout, "status")
         payout_id = _stripe_obj_value(payout, "id", "")
@@ -258,8 +343,9 @@ def _payment_intent_to_admin_payment(
     intent,
     payout_cache: dict | None = None,
     include_payout_status: bool = True,
+    organization: Organization | None = None,
 ) -> dict:
-    charge = _latest_charge_for_intent(intent)
+    charge = _latest_charge_for_intent(intent, organization=organization)
     amount_cents = int(_stripe_obj_value(charge, "amount", _stripe_obj_value(intent, "amount", 0)) or 0)
     amount_refunded_cents = int(_stripe_obj_value(charge, "amount_refunded", 0) or 0)
     refundable_cents = max(amount_cents - amount_refunded_cents, 0)
@@ -267,7 +353,11 @@ def _payment_intent_to_admin_payment(
     payout_label = "-"
     payout_detail = ""
     if include_payout_status:
-        payout_label, payout_detail = _payout_status_for_payment(charge, payout_cache=payout_cache)
+        payout_label, payout_detail = _payout_status_for_payment(
+            charge,
+            payout_cache=payout_cache,
+            organization=organization,
+        )
 
     return {
         "id": _stripe_obj_value(intent, "id", ""),
@@ -288,20 +378,23 @@ def _payment_intent_to_admin_payment(
     }
 
 
-def _list_successful_admin_payments() -> list[dict]:
+def _list_successful_admin_payments(organization: Organization) -> list[dict]:
+    if not organization.stripe_connect_account_id:
+        return []
     intents = stripe.PaymentIntent.list(
         limit=100,
         expand=["data.latest_charge", "data.latest_charge.balance_transaction"],
+        stripe_account=organization.stripe_connect_account_id,
     )
     payments = []
     payout_cache = {}
     for intent in _stripe_obj_value(intents, "data", []) or []:
         if _stripe_obj_value(intent, "status") != "succeeded":
             continue
-        club = _stripe_metadata_value(intent, "club")
-        if club and club != "DARC e.V. OV L11":
+        metadata_organization_id = _stripe_metadata_value(intent, "organization_id")
+        if metadata_organization_id and metadata_organization_id != str(organization.id):
             continue
-        payments.append(_payment_intent_to_admin_payment(intent, payout_cache=payout_cache))
+        payments.append(_payment_intent_to_admin_payment(intent, payout_cache=payout_cache, organization=organization))
     return payments
 
 
@@ -311,10 +404,14 @@ def _parse_optional_refund_cents(value: str | None) -> int | None:
     return _parse_price_cents_from_form(value)
 
 
-def _refund_payment_intent(payment_intent_id: str | None, refund_amount: str | None) -> int:
+def _refund_payment_intent(organization: Organization, payment_intent_id: str | None, refund_amount: str | None) -> int:
     if not isinstance(payment_intent_id, str) or not payment_intent_id.strip():
         raise APIError("payment_intent_id ist erforderlich", 400)
-    intent = stripe.PaymentIntent.retrieve(payment_intent_id.strip(), expand=["latest_charge"])
+    intent = stripe.PaymentIntent.retrieve(
+        payment_intent_id.strip(),
+        expand=["latest_charge"],
+        stripe_account=organization.stripe_connect_account_id,
+    )
     if _stripe_obj_value(intent, "status") != "succeeded":
         raise APIError("Nur erfolgreiche Zahlungen koennen erstattet werden", 400)
 
@@ -327,62 +424,37 @@ def _refund_payment_intent(payment_intent_id: str | None, refund_amount: str | N
     if requested_cents > refundable_cents:
         raise APIError("Rueckerstattung darf den offenen Betrag nicht ueberschreiten", 400)
 
-    stripe.Refund.create(
-        payment_intent=payment["id"],
-        amount=requested_cents,
-        reason="requested_by_customer",
-        metadata={"refunded_by": "club-payment-admin"},
-    )
+    refund_payment_for_organization(organization, payment["id"], requested_cents)
     return requested_cents
 
 
-def _resolve_terminal_location_id() -> str:
+def _resolve_terminal_location_id(organization: Organization) -> str:
     configured_location_id = (STRIPE_LOCATION_ID or "").strip()
     if configured_location_id:
         return configured_location_id
-
-    try:
-        locations = stripe.terminal.Location.list(limit=100)
-        for location in getattr(locations, "data", None) or []:
-            location_id = (getattr(location, "id", None) or "").strip()
-            if location_id:
-                return location_id
-
-        location = stripe.terminal.Location.create(
-            display_name=STRIPE_LOCATION_DISPLAY_NAME,
-            address=STRIPE_LOCATION_ADDRESS,
-            metadata={"created_by": "club-payment-backend"},
-        )
-        location_id = (getattr(location, "id", None) or "").strip()
-        if location_id:
-            return location_id
-    except stripe.error.StripeError as err:
-        logger.warning("Could not resolve Stripe Terminal location: %s", err)
-        raise APIError("Stripe Terminal Location konnte nicht geladen werden", 502)
-
-    raise APIError(
-        "Keine Stripe Terminal Location gefunden oder automatisch angelegt.",
-        400,
-    )
+    return resolve_terminal_location_id(organization)
 
 
 def _render_admin_users(admin_user, error_message: str | None = None):
+    organization = _organization_for_admin_web(admin_user)
     store = get_user_store()
-    users = list(store.list_users())
+    users = list(store.list_users(organization_id=organization.id))
     registry = get_device_registry()
-    assignments = {assignment.user_id: assignment.device_id for assignment in registry.list_devices()}
+    assignments = {assignment.user_id: assignment.device_id for assignment in registry.list_devices(organization.id)}
     devices = []
-    for assignment in registry.list_devices():
+    for assignment in registry.list_devices(organization.id):
         user = store.get_by_id(assignment.user_id)
         devices.append({
             "device_id": assignment.device_id,
             "user": user,
         })
-    pending_devices = list(registry.list_pending_devices())
+    pending_devices = list(registry.list_pending_devices(organization.id))
     return render_template(
         "admin_users.html",
         admin_name=_user_identifier(admin_user),
         is_admin=_is_admin(admin_user),
+        is_system_admin=_is_system_admin(admin_user),
+        organization=organization,
         users=users,
         assignments=assignments,
         devices=devices,
@@ -393,12 +465,15 @@ def _render_admin_users(admin_user, error_message: str | None = None):
 
 
 def _render_admin_products(admin_user, error_message: str | None = None):
+    organization = _organization_for_admin_web(admin_user)
     store = get_product_store()
     return render_template(
         "admin_products.html",
         admin_name=_user_identifier(admin_user),
         is_admin=_is_admin(admin_user),
-        products=list(store.list_products()),
+        is_system_admin=_is_system_admin(admin_user),
+        organization=organization,
+        products=list(store.list_products(organization.id)),
         format_price_euros=_format_price_euros,
         error_message=error_message,
     )
@@ -409,9 +484,10 @@ def _render_admin_payments(
     error_message: str | None = None,
     success_message: str | None = None,
 ):
+    organization = _organization_for_user(admin_user)
     payments = []
     try:
-        payments = _list_successful_admin_payments()
+        payments = _list_successful_admin_payments(organization)
     except stripe.error.StripeError as err:
         logger.warning("Could not load Stripe payments for admin page: %s", err)
         error_message = error_message or "Zahlungen konnten nicht von Stripe geladen werden"
@@ -420,12 +496,50 @@ def _render_admin_payments(
         "admin_payments.html",
         admin_name=_user_identifier(admin_user),
         is_admin=_is_admin(admin_user),
+        is_system_admin=_is_system_admin(admin_user),
+        organization=organization,
         can_refund=_is_admin(admin_user),
         payments=payments,
         format_price_euros=_format_price_euros,
         error_message=error_message,
         success_message=success_message,
     )
+
+
+def _log_payment_intent(organization: Organization, user, intent, item: str, device: str) -> None:
+    metadata = _stripe_obj_value(intent, "metadata", {}) or {}
+    if not isinstance(metadata, dict) and hasattr(metadata, "to_dict"):
+        metadata = metadata.to_dict()
+    application_fee_amount_cents = int(
+        (metadata.get("application_fee_amount_cents") if isinstance(metadata, dict) else None) or 0
+    )
+    with SessionLocal() as db_session:
+        existing = (
+            db_session.query(PaymentLogRecord)
+            .filter(PaymentLogRecord.stripe_payment_intent_id == _stripe_obj_value(intent, "id", ""))
+            .first()
+        )
+        if existing:
+            existing.status = _stripe_obj_value(intent, "status", existing.status)
+            existing.stripe_charge_id = _stripe_obj_value(_stripe_obj_value(intent, "latest_charge"), "id")
+        else:
+            db_session.add(
+                PaymentLogRecord(
+                    organization_id=organization.id,
+                    stripe_payment_intent_id=_stripe_obj_value(intent, "id", ""),
+                    stripe_charge_id=_stripe_obj_value(_stripe_obj_value(intent, "latest_charge"), "id"),
+                    amount_cents=int(_stripe_obj_value(intent, "amount", 0) or 0),
+                    application_fee_amount_cents=application_fee_amount_cents,
+                    currency=str(_stripe_obj_value(intent, "currency", "eur") or "eur"),
+                    item=item,
+                    cashier_user_id=user.id,
+                    cashier_name=_user_identifier(user),
+                    device_id=device,
+                    status=str(_stripe_obj_value(intent, "status", "created") or "created"),
+                    created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                )
+            )
+        db_session.commit()
 
 
 @app.route("/")
@@ -463,22 +577,25 @@ def latest_app_version():
 @app.route("/terminal/connection_token", methods=["POST"])
 @handle_errors
 def create_connection_token():
-    authenticate_request(request)
-    token = stripe.terminal.ConnectionToken.create()
+    user = authenticate_request(request)
+    organization = _organization_for_user(user)
+    token = create_terminal_connection_token(organization)
     return jsonify({"secret": token.secret})
 
 
 @app.route("/terminal/config", methods=["GET"])
 @handle_errors
 def terminal_config():
-    authenticate_request(request)
-    return jsonify({"location_id": _resolve_terminal_location_id()})
+    user = authenticate_request(request)
+    organization = _organization_for_user(user)
+    return jsonify({"location_id": _resolve_terminal_location_id(organization)})
 
 
 @app.route("/pos/create_intent", methods=["POST"])
 @handle_errors
 def create_payment_intent():
     user = authenticate_request(request)
+    organization = _organization_for_user(user)
     payload = request.get_json(force=True, silent=True) or {}
     amount_cents = validate_amount_cents(payload.get("amount_cents"))
     currency = payload.get("currency", "eur")
@@ -488,7 +605,7 @@ def create_payment_intent():
         raise APIError("device ist erforderlich", 400)
 
     registry = get_device_registry()
-    assignment = registry.get_device(device)
+    assignment = registry.get_device(device, organization.id)
     if not assignment:
         raise APIError("Gerät ist nicht registriert", 403)
 
@@ -496,45 +613,40 @@ def create_payment_intent():
     assigned_user = store.get_by_id(assignment.user_id)
     if not assigned_user:
         raise APIError("Zugeordneter Benutzer existiert nicht", 400)
-    if assigned_user.id != user.id:
-        raise APIError("Gerät gehört nicht zum angemeldeten Benutzer", 403)
+    if assigned_user.id != user.id or assigned_user.organization_id != organization.id:
+        raise APIError("Geraet gehoert nicht zum angemeldeten Benutzer dieses OV", 403)
 
-    kassierer = _user_identifier(assigned_user)
-
-    description = "DARC e.V. OV L11 Getränke"
-    metadata = {
-        "club": "DARC e.V. OV L11",
-        "item": str(item),
-        "kassierer": str(kassierer),
-        "device": str(device),
-        "user_id": str(assigned_user.id),
-        "role": assigned_user.role.value,
-    }
-
-    intent = stripe.PaymentIntent.create(
-        amount=amount_cents,
+    intent = create_payment_intent_for_organization(
+        organization=organization,
+        user=assigned_user,
+        amount_cents=amount_cents,
         currency=currency,
-        description=description,
-        payment_method_types=["card_present"],
-        capture_method="automatic",
-        metadata=metadata,
+        item=str(item),
+        device=str(device),
     )
+    _log_payment_intent(organization, assigned_user, intent, str(item), str(device))
     return jsonify({
         "id": intent.id,
         "client_secret": intent.client_secret,
         "amount_cents": intent.amount,
+        "application_fee_amount_cents": calculate_application_fee_cents(
+            int(intent.amount),
+            get_platform_fee_basis_points(organization),
+        ),
     })
 
 
 @app.route("/pos/receipt/<string:payment_intent_id>", methods=["GET"])
 @handle_errors
 def get_receipt(payment_intent_id: str):
-    authenticate_request(request)
+    user = authenticate_request(request)
+    organization = _organization_for_user(user)
     if not payment_intent_id.strip():
         raise APIError("payment_intent_id ist erforderlich", 400)
     intent = stripe.PaymentIntent.retrieve(
         payment_intent_id,
         expand=["latest_charge", "charges"],
+        stripe_account=organization.stripe_connect_account_id,
     )
     charge = intent.latest_charge
     if not charge and getattr(intent, "charges", None) and intent.charges.data:
@@ -548,7 +660,8 @@ def get_receipt(payment_intent_id: str):
 @app.route("/admin/devices", methods=["POST"])
 @handle_errors
 def assign_device():
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     payload = request.get_json(force=True, silent=True) or {}
     device_id = payload.get("device_id") or payload.get("device") or payload.get("android_id")
     user_id = payload.get("user_id")
@@ -564,26 +677,32 @@ def assign_device():
     user = store.get_by_id(user_id_value)
     if not user:
         raise APIError("User nicht gefunden", 404)
+    if admin_user.role == Role.OV_ADMIN and user.organization_id != admin_user.organization_id:
+        raise APIError("User gehoert nicht zu diesem OV", 403)
+    if user.organization_id != organization.id:
+        raise APIError("User gehoert nicht zu diesem OV", 403)
 
     registry = get_device_registry()
-    assignment = registry.assign_device(device_id=device_id.strip(), user_id=user.id)
+    assignment = registry.assign_device(device_id=device_id.strip(), user_id=user.id, organization_id=organization.id)
     return jsonify({
         "device_id": assignment.device_id,
         "user_id": assignment.user_id,
         "role": user.role.value,
         "name": _user_identifier(user),
         "username": user.username,
+        "organization_id": assignment.organization_id,
     }), 201
 
 
 @app.route("/admin/devices", methods=["GET"])
 @handle_errors
 def list_devices():
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     registry = get_device_registry()
     store = get_user_store()
     devices = []
-    for assignment in registry.list_devices():
+    for assignment in registry.list_devices(organization.id):
         user = store.get_by_id(assignment.user_id)
         devices.append({
             "device_id": assignment.device_id,
@@ -592,6 +711,7 @@ def list_devices():
             "username": user.username if user else None,
             "role": user.role.value if user else None,
             "active": user.active if user else None,
+            "organization_id": assignment.organization_id,
         })
     pending_devices = [
         {
@@ -600,7 +720,7 @@ def list_devices():
             "username": pending.username,
             "last_seen_at": pending.last_seen_at.isoformat(),
         }
-        for pending in registry.list_pending_devices()
+        for pending in registry.list_pending_devices(organization.id)
     ]
     return jsonify({"devices": devices, "pending_devices": pending_devices})
 
@@ -608,9 +728,10 @@ def list_devices():
 @app.route("/admin/devices/<path:device_id>", methods=["DELETE"])
 @handle_errors
 def delete_device(device_id: str):
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     registry = get_device_registry()
-    if not registry.delete_device(device_id):
+    if not registry.delete_device(device_id, organization.id):
         raise APIError("Geraet nicht gefunden", 404)
     return jsonify({"deleted": True, "device_id": device_id})
 
@@ -618,15 +739,20 @@ def delete_device(device_id: str):
 @app.route("/admin/users", methods=["POST"])
 @handle_errors
 def create_user():
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     payload = request.get_json(force=True, silent=True) or {}
     role_value = payload.get("role")
     active = payload.get("active", True)
     username = payload.get("username")
     password = payload.get("password")
 
-    if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
-        raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
+    try:
+        role = Role.from_value(role_value)
+    except (TypeError, ValueError):
+        raise APIError("role muss 'ov_admin', 'system_admin' oder 'kassierer' sein", 400)
+    if admin_user.role == Role.OV_ADMIN and role != Role.KASSIERER:
+        raise APIError("OV-Admins duerfen nur Kassierer im eigenen OV anlegen", 403)
     if not isinstance(active, bool):
         raise APIError("active muss ein boolescher Wert sein", 400)
     if not isinstance(username, str) or not username.strip():
@@ -642,10 +768,11 @@ def create_user():
     password_hash = store.hash_password(password)
     user = store.create_user(
         name=normalized_username,
-        role=Role(role_value),
+        role=role,
         active=active,
         username=normalized_username,
         password_hash=password_hash,
+        organization_id=None if role == Role.SYSTEM_ADMIN else organization.id,
     )
     return jsonify({
         "id": user.id,
@@ -654,6 +781,7 @@ def create_user():
         "role": user.role.value,
         "active": user.active,
         "api_token": user.api_token,
+        "organization_id": user.organization_id,
     }), 201
 
 
@@ -676,6 +804,9 @@ def login():
         raise APIError("Benutzername oder Passwort ungültig", 401)
     if not user.active:
         raise APIError("Benutzer ist deaktiviert", 403)
+    organization = None
+    if user.organization_id is not None:
+        organization = get_organization_store().get_by_id(user.organization_id)
 
     device_pending = False
     if isinstance(device_id, str) and device_id.strip():
@@ -684,6 +815,7 @@ def login():
             device_id=device_id.strip(),
             user_id=user.id,
             username=_user_identifier(user),
+            organization_id=organization.id if organization else None,
         )
         device_pending = pending_device is not None
 
@@ -691,6 +823,8 @@ def login():
         "token": user.api_token,
         "display_name": _user_identifier(user),
         "device_pending": device_pending,
+        "organization": _organization_payload(organization),
+        "stripe_ready": connected_account_ready(organization) if organization else False,
     })
 
 
@@ -716,7 +850,7 @@ def admin_web_login():
                 error_message = "Benutzername oder Passwort ungültig"
             elif not user.active:
                 error_message = "Benutzer ist deaktiviert"
-            elif user.role not in {Role.ADMIN, Role.KASSIERER}:
+            elif user.role not in {Role.SYSTEM_ADMIN, Role.OV_ADMIN, Role.KASSIERER}:
                 error_message = "Nur Admins und Kassierer duerfen sich anmelden"
             else:
                 session["admin_user_id"] = user.id
@@ -729,6 +863,234 @@ def admin_web_login():
 def admin_web_logout():
     session.pop("admin_user_id", None)
     return redirect(url_for("admin_web_login"))
+
+
+def _require_system_admin_web():
+    web_user = _get_web_user_from_session()
+    if not web_user:
+        return None, redirect(url_for("admin_web_login"))
+    if not _is_system_admin(web_user):
+        return None, redirect(url_for(_default_web_endpoint_for_user(web_user)))
+    return web_user, None
+
+
+@app.route("/admin/system")
+def admin_system_index():
+    web_user, redirect_response = _require_system_admin_web()
+    if redirect_response:
+        return redirect_response
+    return redirect(url_for("admin_system_organizations"))
+
+
+@app.route("/admin/system/organizations")
+def admin_system_organizations():
+    web_user, redirect_response = _require_system_admin_web()
+    if redirect_response:
+        return redirect_response
+    organizations = list(get_organization_store().list_organizations(include_inactive=True))
+    return render_template(
+        "admin_system_organizations.html",
+        admin_name=_user_identifier(web_user),
+        is_admin=True,
+        is_system_admin=True,
+        organizations=organizations,
+        format_basis_points=_format_basis_points,
+    )
+
+
+@app.route("/admin/system/organizations/new", methods=["GET", "POST"])
+def admin_system_organization_new():
+    web_user, redirect_response = _require_system_admin_web()
+    if redirect_response:
+        return redirect_response
+    error_message = None
+    if request.method == "POST":
+        try:
+            name = request.form.get("name")
+            dok = request.form.get("dok")
+            slug = request.form.get("slug")
+            if not isinstance(name, str) or not name.strip():
+                raise APIError("Name ist erforderlich", 400)
+            if not isinstance(dok, str) or not dok.strip():
+                raise APIError("DOK ist erforderlich", 400)
+            get_organization_store().create_organization(
+                name=name,
+                dok=dok,
+                slug=slug,
+                active=request.form.get("active") == "on",
+                platform_fee_basis_points=_parse_basis_points_from_form(request.form.get("platform_fee_basis_points")),
+                address_line1=request.form.get("address_line1"),
+                address_postal_code=request.form.get("address_postal_code"),
+                address_city=request.form.get("address_city"),
+                address_country=request.form.get("address_country") or "DE",
+            )
+            return redirect(url_for("admin_system_organizations"))
+        except (APIError, ValueError) as err:
+            error_message = str(err)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Organization creation failed: %s", err)
+            error_message = "OV konnte nicht angelegt werden"
+
+    return render_template(
+        "admin_system_organization_form.html",
+        admin_name=_user_identifier(web_user),
+        is_admin=True,
+        is_system_admin=True,
+        organization=None,
+        error_message=error_message,
+    )
+
+
+@app.route("/admin/system/organizations/<slug>/edit", methods=["GET", "POST"])
+def admin_system_organization_edit(slug: str):
+    web_user, redirect_response = _require_system_admin_web()
+    if redirect_response:
+        return redirect_response
+    store = get_organization_store()
+    organization = store.get_by_slug(slug)
+    if not organization:
+        return redirect(url_for("admin_system_organizations"))
+
+    error_message = None
+    if request.method == "POST":
+        try:
+            name = request.form.get("name")
+            dok = request.form.get("dok")
+            new_slug = request.form.get("slug")
+            if not isinstance(name, str) or not name.strip():
+                raise APIError("Name ist erforderlich", 400)
+            if not isinstance(dok, str) or not dok.strip():
+                raise APIError("DOK ist erforderlich", 400)
+            updated = store.update_organization(
+                organization_id=organization.id,
+                name=name,
+                dok=dok,
+                slug=new_slug,
+                active=request.form.get("active") == "on",
+                platform_fee_basis_points=_parse_basis_points_from_form(request.form.get("platform_fee_basis_points")),
+                address_line1=request.form.get("address_line1"),
+                address_postal_code=request.form.get("address_postal_code"),
+                address_city=request.form.get("address_city"),
+                address_country=request.form.get("address_country") or "DE",
+            )
+            return redirect(url_for("admin_system_organization_edit", slug=updated.slug if updated else slug))
+        except (APIError, ValueError) as err:
+            error_message = str(err)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("Organization update failed: %s", err)
+            error_message = "OV konnte nicht aktualisiert werden"
+
+    return render_template(
+        "admin_system_organization_form.html",
+        admin_name=_user_identifier(web_user),
+        is_admin=True,
+        is_system_admin=True,
+        organization=organization,
+        error_message=error_message,
+    )
+
+
+@app.route("/admin/system/organizations/<slug>/disable", methods=["POST"])
+def admin_system_organization_disable(slug: str):
+    web_user, redirect_response = _require_system_admin_web()
+    if redirect_response:
+        return redirect_response
+    organization = get_organization_store().get_by_slug(slug)
+    if organization:
+        get_organization_store().set_active(organization.id, False)
+    return redirect(url_for("admin_system_organizations"))
+
+
+@app.route("/admin/system/organizations/<slug>/enable", methods=["POST"])
+def admin_system_organization_enable(slug: str):
+    web_user, redirect_response = _require_system_admin_web()
+    if redirect_response:
+        return redirect_response
+    organization = get_organization_store().get_by_slug(slug)
+    if organization:
+        get_organization_store().set_active(organization.id, True)
+    return redirect(url_for("admin_system_organizations"))
+
+
+@app.route("/admin/system/organizations/<slug>/create-ov-admin", methods=["POST"])
+def admin_system_create_ov_admin(slug: str):
+    web_user, redirect_response = _require_system_admin_web()
+    if redirect_response:
+        return redirect_response
+    organization = get_organization_store().get_by_slug(slug)
+    if not organization:
+        return redirect(url_for("admin_system_organizations"))
+    username = request.form.get("username")
+    password = request.form.get("password")
+    if isinstance(username, str) and username.strip() and isinstance(password, str) and password.strip():
+        store = get_user_store()
+        if not store.get_by_username(username.strip()):
+            store.create_user(
+                name=username.strip(),
+                role=Role.OV_ADMIN,
+                active=True,
+                username=username.strip(),
+                password_hash=store.hash_password(password.strip()),
+                organization_id=organization.id,
+            )
+    return redirect(url_for("admin_system_organization_edit", slug=organization.slug))
+
+
+@app.route("/admin/web/stripe")
+def admin_web_stripe():
+    web_user = _get_web_user_from_session()
+    if not web_user:
+        return redirect(url_for("admin_web_login"))
+    if _is_system_admin(web_user):
+        return redirect(url_for("admin_system_organizations"))
+    if not _is_admin(web_user):
+        return redirect(url_for("admin_web_payments"))
+    organization = _organization_for_admin_web(web_user)
+    ready = connected_account_ready(organization)
+    return render_template(
+        "admin_stripe.html",
+        admin_name=_user_identifier(web_user),
+        is_admin=True,
+        is_system_admin=False,
+        organization=organization,
+        stripe_ready=ready,
+        format_basis_points=_format_basis_points,
+    )
+
+
+@app.route("/admin/web/stripe/onboarding", methods=["POST"])
+def admin_web_stripe_onboarding():
+    web_user = _get_web_user_from_session()
+    if not web_user:
+        return redirect(url_for("admin_web_login"))
+    if _is_system_admin(web_user):
+        return redirect(url_for("admin_system_organizations"))
+    if not _is_admin(web_user):
+        return redirect(url_for("admin_web_payments"))
+    organization = _organization_for_admin_web(web_user)
+    if not organization.stripe_connect_account_id:
+        create_connected_account_for_organization(organization, email=web_user.username)
+        organization = get_organization_store().get_by_id(organization.id) or organization
+    link = create_account_onboarding_link(organization)
+    return redirect(getattr(link, "url", None) or link["url"])
+
+
+@app.route("/admin/stripe/refresh")
+def admin_stripe_refresh():
+    return redirect(url_for("admin_web_stripe"))
+
+
+@app.route("/admin/stripe/return")
+def admin_stripe_return():
+    web_user = _get_web_user_from_session()
+    if web_user and web_user.organization_id:
+        organization = get_organization_store().get_by_id(web_user.organization_id)
+        if organization and connected_account_ready(organization):
+            get_organization_store().update_organization(
+                organization_id=organization.id,
+                stripe_connect_onboarding_complete=True,
+            )
+    return redirect(url_for("admin_web_stripe"))
 
 
 @app.route("/admin/web/account", methods=["GET", "POST"])
@@ -774,6 +1136,7 @@ def admin_web_account():
         admin_name=_user_identifier(web_user),
         user=web_user,
         is_admin=_is_admin(web_user),
+        is_system_admin=_is_system_admin(web_user),
         error_message=error_message,
         success_message=success_message,
     )
@@ -792,6 +1155,8 @@ def admin_web_users():
     admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
+    if _is_system_admin(admin_user):
+        return redirect(url_for("admin_system_organizations"))
     if not _is_admin(admin_user):
         return redirect(url_for("admin_web_payments"))
 
@@ -813,18 +1178,23 @@ def admin_web_users():
                 user = store.get_by_id(user_id)
                 if not user:
                     raise APIError("User nicht gefunden", 404)
+                if user.organization_id != admin_user.organization_id:
+                    raise APIError("User gehoert nicht zu diesem OV", 403)
                 if user.id == admin_user.id:
                     raise APIError("Der eigene Admin-Nutzer kann hier nicht geloescht werden", 400)
                 if _would_remove_last_active_admin(user, active=False):
                     raise APIError("Der letzte aktive Admin kann nicht geloescht werden", 400)
                 registry = get_device_registry()
-                registry.delete_devices_for_user(user.id)
+                registry.delete_devices_for_user(user.id, admin_user.organization_id)
                 store.delete_user(user.id)
                 return redirect(url_for("admin_web_users"))
 
-            if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
-                raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
-            role = Role(role_value)
+            try:
+                role = Role.from_value(role_value)
+            except (TypeError, ValueError):
+                raise APIError("role muss 'ov_admin' oder 'kassierer' sein", 400)
+            if role == Role.SYSTEM_ADMIN:
+                raise APIError("System-Admins werden im Systembereich angelegt", 403)
             if not isinstance(username, str) or not username.strip():
                 raise APIError("username ist erforderlich", 400)
             normalized_username = username.strip()
@@ -841,6 +1211,7 @@ def admin_web_users():
                     active=active,
                     username=normalized_username,
                     password_hash=store.hash_password(password),
+                    organization_id=admin_user.organization_id,
                 )
                 return redirect(url_for("admin_web_users"))
 
@@ -852,6 +1223,8 @@ def admin_web_users():
                 user = store.get_by_id(user_id)
                 if not user:
                     raise APIError("User nicht gefunden", 404)
+                if user.organization_id != admin_user.organization_id:
+                    raise APIError("User gehoert nicht zu diesem OV", 403)
                 if existing_user and existing_user.id != user.id:
                     raise APIError("username ist bereits vergeben", 400)
                 if _would_remove_last_active_admin(user, role=role, active=active):
@@ -864,6 +1237,7 @@ def admin_web_users():
                     active=active,
                     username=normalized_username,
                     password_hash=password_hash,
+                    organization_id=admin_user.organization_id,
                 )
                 return redirect(url_for("admin_web_users"))
 
@@ -879,6 +1253,8 @@ def admin_web_devices():
     admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
+    if _is_system_admin(admin_user):
+        return redirect(url_for("admin_system_organizations"))
     if not _is_admin(admin_user):
         return redirect(url_for("admin_web_payments"))
 
@@ -891,7 +1267,7 @@ def admin_web_devices():
         error_message = "device_id ist erforderlich"
     elif action == "delete":
         registry = get_device_registry()
-        if not registry.delete_device(device_id.strip()):
+        if not registry.delete_device(device_id.strip(), admin_user.organization_id):
             error_message = "Geraet nicht gefunden"
         else:
             return redirect(url_for("admin_web_users"))
@@ -905,9 +1281,15 @@ def admin_web_devices():
             user = store.get_by_id(user_id_value)
             if not user:
                 error_message = "User nicht gefunden"
+            elif user.organization_id != admin_user.organization_id:
+                error_message = "User gehoert nicht zu diesem OV"
             else:
                 registry = get_device_registry()
-                registry.assign_device(device_id=device_id.strip(), user_id=user.id)
+                registry.assign_device(
+                    device_id=device_id.strip(),
+                    user_id=user.id,
+                    organization_id=admin_user.organization_id,
+                )
                 return redirect(url_for("admin_web_users"))
 
     return _render_admin_users(admin_user, error_message=error_message)
@@ -918,6 +1300,8 @@ def admin_web_products():
     admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
+    if _is_system_admin(admin_user):
+        return redirect(url_for("admin_system_organizations"))
     if not _is_admin(admin_user):
         return redirect(url_for("admin_web_payments"))
 
@@ -935,7 +1319,7 @@ def admin_web_products():
                     product_id = int(request.form.get("product_id"))
                 except (TypeError, ValueError):
                     raise APIError("product_id muss eine ganze Zahl sein", 400)
-                if not store.delete_product(product_id):
+                if not store.delete_product(product_id, admin_user.organization_id):
                     raise APIError("Produkt nicht gefunden", 404)
             else:
                 if not isinstance(name, str) or not name.strip():
@@ -943,7 +1327,12 @@ def admin_web_products():
                 price_cents = _parse_price_cents_from_form(price)
 
             if action == "create":
-                store.create_product(name=name.strip(), price_cents=price_cents, active=active)
+                store.create_product(
+                    name=name.strip(),
+                    price_cents=price_cents,
+                    active=active,
+                    organization_id=admin_user.organization_id,
+                )
             elif action == "update":
                 try:
                     product_id = int(request.form.get("product_id"))
@@ -954,6 +1343,7 @@ def admin_web_products():
                     name=name.strip(),
                     price_cents=price_cents,
                     active=active,
+                    organization_id=admin_user.organization_id,
                 )
                 if not product:
                     raise APIError("Produkt nicht gefunden", 404)
@@ -973,6 +1363,7 @@ def admin_web_payments():
     admin_user = _get_web_user_from_session()
     if not admin_user:
         return redirect(url_for("admin_web_login"))
+    organization = _organization_for_user(admin_user)
 
     error_message = None
     success_message = session.pop("admin_payments_success", None)
@@ -984,6 +1375,7 @@ def admin_web_payments():
             if not _is_admin(admin_user):
                 raise APIError("Nur Administratoren duerfen Rueckerstattungen ausloesen", 403)
             refunded_cents = _refund_payment_intent(
+                organization,
                 request.form.get("payment_intent_id"),
                 request.form.get("refund_amount"),
             )
@@ -1007,8 +1399,9 @@ def admin_web_payments():
 @app.route("/admin/users", methods=["GET"])
 @handle_errors
 def list_users():
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
     store = get_user_store()
+    organization_id = None if admin_user.role == Role.SYSTEM_ADMIN else admin_user.organization_id
     users = [
         {
             "id": user.id,
@@ -1017,7 +1410,7 @@ def list_users():
             "role": user.role.value,
             "active": user.active,
         }
-        for user in store.list_users()
+        for user in store.list_users(organization_id=organization_id)
     ]
     return jsonify({"users": users})
 
@@ -1025,7 +1418,7 @@ def list_users():
 @app.route("/admin/users/<int:user_id>", methods=["PATCH"])
 @handle_errors
 def update_user(user_id: int):
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
     payload = request.get_json(force=True, silent=True) or {}
     username = payload.get("username")
     password = payload.get("password")
@@ -1034,9 +1427,12 @@ def update_user(user_id: int):
 
     role = None
     if role_value is not None:
-        if role_value not in {Role.ADMIN.value, Role.KASSIERER.value}:
-            raise APIError("role muss 'admin' oder 'kassierer' sein", 400)
-        role = Role(role_value)
+        try:
+            role = Role.from_value(role_value)
+        except (TypeError, ValueError):
+            raise APIError("role muss 'ov_admin', 'system_admin' oder 'kassierer' sein", 400)
+        if admin_user.role == Role.OV_ADMIN and role != Role.KASSIERER:
+            raise APIError("OV-Admins duerfen nur Kassierer verwalten", 403)
     if active is not None and not isinstance(active, bool):
         raise APIError("active muss ein boolescher Wert sein", 400)
     if username is not None and (not isinstance(username, str) or not username.strip()):
@@ -1048,6 +1444,8 @@ def update_user(user_id: int):
     current_user = store.get_by_id(user_id)
     if not current_user:
         raise APIError("User nicht gefunden", 404)
+    if admin_user.role == Role.OV_ADMIN and current_user.organization_id != admin_user.organization_id:
+        raise APIError("User gehoert nicht zu diesem OV", 403)
     normalized_username = username.strip() if isinstance(username, str) else None
     if normalized_username:
         existing_user = store.get_by_username(normalized_username)
@@ -1062,6 +1460,7 @@ def update_user(user_id: int):
         active=active,
         username=normalized_username,
         password_hash=store.hash_password(password) if isinstance(password, str) else None,
+        organization_id=None if role == Role.SYSTEM_ADMIN else current_user.organization_id,
     )
     return jsonify({
         "id": user.id,
@@ -1086,7 +1485,7 @@ def delete_user(user_id: int):
         raise APIError("Der letzte aktive Admin kann nicht geloescht werden", 400)
 
     registry = get_device_registry()
-    registry.delete_devices_for_user(user.id)
+    registry.delete_devices_for_user(user.id, user.organization_id)
     store.delete_user(user.id)
     return jsonify({"deleted": True, "id": user_id})
 
@@ -1094,7 +1493,8 @@ def delete_user(user_id: int):
 @app.route("/admin/products", methods=["POST"])
 @handle_errors
 def create_product():
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     payload = request.get_json(force=True, silent=True) or {}
     name = payload.get("name")
     price_cents = payload.get("price_cents")
@@ -1110,6 +1510,7 @@ def create_product():
         name=name.strip(),
         price_cents=validate_amount_cents(price_cents),
         active=active,
+        organization_id=organization.id,
     )
     return jsonify({
         "id": product.id,
@@ -1122,7 +1523,8 @@ def create_product():
 @app.route("/admin/products", methods=["GET"])
 @handle_errors
 def list_products():
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     store = get_product_store()
     products = [
         {
@@ -1131,7 +1533,7 @@ def list_products():
             "price_cents": product.price_cents,
             "active": product.active,
         }
-        for product in store.list_products()
+        for product in store.list_products(organization.id)
     ]
     return jsonify({"products": products})
 
@@ -1139,7 +1541,8 @@ def list_products():
 @app.route("/products", methods=["GET"])
 @handle_errors
 def list_active_products():
-    authenticate_request(request)
+    user = authenticate_request(request)
+    organization = _organization_for_user(user)
     store = get_product_store()
     products = [
         {
@@ -1148,7 +1551,7 @@ def list_active_products():
             "price_cents": product.price_cents,
             "active": product.active,
         }
-        for product in store.list_products()
+        for product in store.list_products(organization.id)
         if product.active
     ]
     return jsonify({"products": products})
@@ -1157,7 +1560,8 @@ def list_active_products():
 @app.route("/admin/products/<int:product_id>", methods=["PATCH"])
 @handle_errors
 def update_product(product_id: int):
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     payload = request.get_json(force=True, silent=True) or {}
     name = payload.get("name")
     price_cents = payload.get("price_cents")
@@ -1179,6 +1583,7 @@ def update_product(product_id: int):
         name=name.strip() if isinstance(name, str) else None,
         price_cents=validated_price_cents,
         active=active,
+        organization_id=organization.id,
     )
     if not product:
         raise APIError("Produkt nicht gefunden", 404)
@@ -1193,9 +1598,10 @@ def update_product(product_id: int):
 @app.route("/admin/products/<int:product_id>", methods=["DELETE"])
 @handle_errors
 def delete_product(product_id: int):
-    authenticate_request(request, require_admin=True)
+    admin_user = authenticate_request(request, require_admin=True)
+    organization = _organization_for_user(admin_user)
     store = get_product_store()
-    if not store.delete_product(product_id):
+    if not store.delete_product(product_id, organization.id):
         raise APIError("Produkt nicht gefunden", 404)
     return jsonify({"deleted": True, "id": product_id})
 
