@@ -826,6 +826,46 @@ def test_interactive_admin_bootstrap_when_no_users(monkeypatch, tmp_path):
     assert admin.name == "Erster Admin"
 
 
+def test_already_migrated_old_admin_becomes_system_admin(monkeypatch, tmp_path):
+    monkeypatch.delenv("ADMIN_API_TOKEN", raising=False)
+    monkeypatch.delenv("ADMIN_ROLE", raising=False)
+    monkeypatch.setenv("INITIAL_ADMIN_AS_SYSTEM_ADMIN", "true")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path / 'old-admin.sqlite3'}")
+
+    backend_root = Path(__file__).resolve().parents[1]
+    if str(backend_root) not in sys.path:
+        sys.path.insert(0, str(backend_root))
+
+    import database as database
+    import users as users
+
+    importlib.reload(database)
+    importlib.reload(users)
+
+    database.Base.metadata.create_all(bind=database.engine)
+    with database.SessionLocal() as session:
+        session.add(
+            database.UserRecord(
+                name="Alter Admin",
+                role="ov_admin",
+                active=True,
+                api_token="old-admin-token",
+                username="admin",
+                password_hash="hash",
+                organization_id=1,
+            )
+        )
+        session.commit()
+
+    database.init_database()
+    store = users.UserStore()
+    admin = store.get_by_username("admin")
+
+    assert admin is not None
+    assert admin.role == users.Role.SYSTEM_ADMIN
+    assert admin.organization_id is None
+
+
 def test_no_interactive_bootstrap_when_admin_exists(monkeypatch, tmp_path):
     monkeypatch.setenv("ADMIN_API_TOKEN", "admin-token")
     monkeypatch.setenv("ADMIN_NAME", "Admin Nutzer")

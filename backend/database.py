@@ -189,9 +189,6 @@ def _ensure_default_organization(connection) -> int:
 def _migrate_roles_and_assignments(connection, default_organization_id: int) -> None:
     user_columns = _table_columns(connection, "users")
     if "organization_id" in user_columns:
-        first_admin = connection.execute(
-            text("SELECT id FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1")
-        ).first()
         initial_admin_as_system_admin = os.getenv("INITIAL_ADMIN_AS_SYSTEM_ADMIN", "true").lower() in {
             "1",
             "true",
@@ -199,11 +196,15 @@ def _migrate_roles_and_assignments(connection, default_organization_id: int) -> 
             "ja",
             "on",
         }
-        if first_admin and initial_admin_as_system_admin:
-            connection.execute(
-                text("UPDATE users SET role = 'system_admin', organization_id = NULL WHERE id = :id"),
-                {"id": int(first_admin[0])},
-            )
+        if initial_admin_as_system_admin:
+            first_admin = connection.execute(
+                text("SELECT id FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1")
+            ).first()
+            if first_admin:
+                connection.execute(
+                    text("UPDATE users SET role = 'system_admin', organization_id = NULL WHERE id = :id"),
+                    {"id": int(first_admin[0])},
+                )
 
         connection.execute(
             text(
@@ -226,6 +227,37 @@ def _migrate_roles_and_assignments(connection, default_organization_id: int) -> 
             ),
             {"organization_id": default_organization_id},
         )
+        configured_admin_role = (os.getenv("ADMIN_ROLE") or "").strip().lower()
+        ov_admin_repair_allowed = configured_admin_role in {"", "admin", "system_admin"}
+        if initial_admin_as_system_admin and ov_admin_repair_allowed:
+            system_admin = connection.execute(
+                text("SELECT id FROM users WHERE role = 'system_admin' ORDER BY id ASC LIMIT 1")
+            ).first()
+            if not system_admin:
+                old_admin_candidate = connection.execute(
+                    text(
+                        """
+                        SELECT id
+                          FROM users
+                         WHERE role = 'ov_admin'
+                         ORDER BY
+                            CASE
+                                WHEN LOWER(COALESCE(username, '')) = 'admin' THEN 0
+                                WHEN LOWER(COALESCE(name, '')) LIKE '%admin%' THEN 1
+                                ELSE 2
+                            END,
+                            id ASC
+                         LIMIT 1
+                        """
+                    )
+                ).first()
+                if old_admin_candidate:
+                    # Repariert Installationen, bei denen eine fruehere Migration
+                    # den alten Admin bereits als OV-Admin gespeichert hat.
+                    connection.execute(
+                        text("UPDATE users SET role = 'system_admin', organization_id = NULL WHERE id = :id"),
+                        {"id": int(old_admin_candidate[0])},
+                    )
 
     for table_name in ("products", "device_assignments"):
         columns = _table_columns(connection, table_name)
