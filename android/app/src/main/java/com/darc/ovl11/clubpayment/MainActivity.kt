@@ -397,12 +397,16 @@ fun AppContent(
     val paymentStatus by viewModel.status.collectAsState()
     val deviceName = viewModel.deviceName
     val nfcAvailability by nfcAvailabilityState.collectAsState()
+    val shouldCheckForUpdates = shouldRunAppUpdateCheck(authState)
 
-    LaunchedEffect(Unit) {
-        viewModel.checkForAppUpdate()
+    LaunchedEffect(authState?.token) {
+        if (shouldCheckForUpdates) {
+            viewModel.checkForAppUpdate()
+            viewModel.loadProducts()
+        }
     }
 
-    if (canShowAppUpdateDialog(paymentStatus)) {
+    if (shouldCheckForUpdates && canShowAppUpdateDialog(paymentStatus)) {
         (appUpdate as? AppUpdateState.Available)?.let { update ->
             AppUpdateDialog(
                 update = update,
@@ -427,9 +431,6 @@ fun AppContent(
                 onOpenNfcSettings = { openNfcSettings(context) }
             )
         } else {
-            LaunchedEffect(authState?.token) {
-                viewModel.loadProducts()
-            }
             PaymentScreen(
                 viewModel = viewModel,
                 userName = authState?.userName.orEmpty(),
@@ -1792,6 +1793,10 @@ fun shouldShowPaymentResultDialog(status: PaymentStatus): Boolean {
 
 fun canShowAppUpdateDialog(status: PaymentStatus): Boolean {
     return status is PaymentStatus.Idle
+}
+
+fun shouldRunAppUpdateCheck(authState: AuthData?): Boolean {
+    return !authState?.token.isNullOrBlank()
 }
 
 fun hasStripeLocationPermission(context: Context): Boolean {

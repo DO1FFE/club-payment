@@ -54,7 +54,7 @@ STRIPE_LOCATION_ADDRESS = {
 }
 APK_DOWNLOAD_DIR = Path(os.getenv("APK_DOWNLOAD_DIR", Path(__file__).resolve().parents[1] / "artifacts"))
 APK_FILENAME_PATTERN = re.compile(r"club-payment-(?P<version>\d+(?:\.\d+)*)-release-signed\.apk$")
-APP_VERSION = os.getenv("APP_VERSION", "1.0.14")
+APP_VERSION = os.getenv("APP_VERSION", "1.0.15")
 
 
 @app.context_processor
