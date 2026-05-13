@@ -1,105 +1,113 @@
-# Club Payment – DARC e.V. OV L11
+# Kassivo
 
-Monorepo mit Android-App (Tap to Pay mit Stripe Terminal) und Flask-Backend für eine einfache Getränke-Kasse.
+Mandantenfaehige DARC-Kassenplattform mit Flask-Backend, Admin-Webbereich und Android-App fuer Stripe Terminal Tap to Pay.
 
-Version 1.0.15 - © 2026 Erik Schauer, do1ffe@darc.de
+Version 1.0.16 - © 2026 Erik Schauer, do1ffe@darc.de
 
-## Voraussetzungen
+## Konzept
 
-### Allgemein
-- Git, Bash
+Kassivo verwaltet mehrere DARC-Ortsverbaende als eigene Mandanten. Jeder OV hat eigene Nutzer, Geraete, Produkte, Zahlungen, eine eigene Stripe Terminal Location und einen eigenen Stripe Connect Account.
 
-### Backend
-- Python 3.11+
+Rollen:
 
-### Android
-- Android Studio Iguana/Koala+
-- JDK 17
-- Android SDK 34
-- Gradle Wrapper liegt bei
+- `system_admin`: Betreiber der Plattform; legt OVs an, verwaltet OV-Oberaccounts, sieht Connect-Status und Plattformgebuehren.
+- `ov_admin`: Verantwortlicher eines OV; verwaltet Kassierer, Geraete, Produkte, Zahlungen und Stripe-Onboarding des eigenen OV.
+- `kassierer`: nimmt Zahlungen in der Android-App an und kann eigene Zugangsdaten aendern.
 
-## Projektstruktur
-- `backend/` – Flask-Service mit Stripe-Terminal-Endpunkten
-- `android/` – Android-Projekt (Jetpack Compose, Stripe Terminal SDK)
+Die Plattform kann eine vom Betreiber festgelegte Plattformgebuehr pro Zahlung einbehalten. Diese wird ueber Stripe Connect als Application Fee verarbeitet und ist fuer den jeweiligen OV im Adminbereich sichtbar.
+
+## Migration
+
+Vor einem Update unbedingt ein Backup der SQLite-Datenbank erstellen:
+
+```bash
+copy backend\club_payment.sqlite3 backend\club_payment.sqlite3.backup
+```
+
+Beim Start fuehrt das Backend eine idempotente Migration aus:
+
+- Falls noch keine Organisation existiert, wird L11 als Default-OV angelegt.
+- Alte Nutzer, Produkte und Geraete ohne `organization_id` werden L11 zugeordnet.
+- Alte Rolle `admin` wird auf `ov_admin` migriert; der erste bestehende Admin kann per `INITIAL_ADMIN_AS_SYSTEM_ADMIN=true` zum `system_admin` werden.
+- `STRIPE_SECRET_KEY` wird rueckwaertskompatibel weiter akzeptiert, gilt aber kuenftig als Plattform-Key.
 
 ## Backend lokal starten
+
 ```bash
 cd backend
 python -m venv .venv
-source .venv/bin/activate
+.venv\Scripts\activate
 pip install -r requirements-dev.txt
-cp .env.example .env  # STRIPE_SECRET_KEY usw. eintragen
-python app.py  # läuft auf Port 4040
+copy .env.example .env
+python app.py
 ```
+
+Der Server laeuft standardmaessig auf Port `4040`.
+
+Wichtige Umgebungsvariablen:
+
+- `STRIPE_PLATFORM_SECRET_KEY`: Secret Key des Plattform-Stripe-Accounts.
+- `STRIPE_SECRET_KEY`: alter Name, wird nur noch als Plattform-Key fallback genutzt.
+- `STRIPE_CONNECT_CLIENT_ID`: optional fuer spaeteres OAuth.
+- `PLATFORM_FEE_BASIS_POINTS`: Default-Plattformgebuehr, z. B. `100` = 1,00 %, `50` = 0,50 %, `0` = keine Gebuehr.
+- `PLATFORM_BASE_URL`: z. B. `https://payment.lima11.de`.
+- `FLASK_SECRET_KEY`, `DATABASE_URL`, `STRIPE_WEBHOOK_SECRET`.
+
+## Stripe Connect
+
+Jeder OV verbindet ein eigenes Stripe-Konto ueber Stripe Express/Connect. Der OV-Admin startet das Onboarding unter `Admin > Stripe`; das Backend erstellt bei Bedarf einen Connected Account und einen Account-Link. PaymentIntents werden anschliessend im Kontext dieses Connected Accounts erzeugt. Die Plattformgebuehr wird als `application_fee_amount` gesetzt.
+
+Terminal Locations werden pro OV gespeichert. Wenn noch keine Location vorhanden ist, listet das Backend die Locations im Connected Account und legt bei Bedarf eine neue Location an.
+
+## Admin-Web
+
+- `/admin/system` und `/admin/system/organizations`: Systembereich fuer Plattformbetreiber.
+- `/admin/web`: OV-Kontext fuer OV-Admins und Kassierer.
+- `/admin/web/users`: Nutzer und Geraete des eigenen OV.
+- `/admin/web/products`: Produkte des eigenen OV.
+- `/admin/web/payments`: erfolgreiche Zahlungen, Auszahlungsstatus und Rueckerstattung.
+- `/admin/web/stripe`: Stripe Connect Status und Onboarding.
+
+## Android-App
+
+Die App spricht produktiv `https://payment.lima11.de/` an. Port `4040` wird in der App nicht angegeben, da NGINX extern ueber HTTPS/Port 443 bzw. HTTP/Port 80 proxyt.
+
+Keine Stripe Secret Keys werden in der App gespeichert. Die App holt Connection Tokens, Terminal Location und PaymentIntents ausschliesslich vom Backend. Bezahlt wird mit dem NFC-Modul des Android-Handys per Stripe Tap to Pay.
+
+Beim ersten Login meldet die App ihre Geraete-ID an das Backend; ein OV-Admin kann diese ID im Adminbereich einem Kassierer zuordnen. Nach erfolgreicher Zahlung zeigt die App einen QR-Code zur Beleg-URL an.
 
 ## Landingpage und APK-Download
-- `/` zeigt eine deutsche Landingpage mit Link zur aktuellen Android-APK.
-- `/apk/latest` liefert automatisch die neueste Datei aus `artifacts/club-payment-*-release-signed.apk` als Download aus.
-- Optional kann `APK_DOWNLOAD_DIR` gesetzt werden, wenn die APKs auf dem Server in einem anderen Ordner liegen.
 
-## Web-Bereich
-- Admins koennen Nutzer, Geraete, Produkte und Zahlungen verwalten.
-- Kassierer koennen sich im Web anmelden, Zahlungen/Belege ansehen und ihr eigenes Passwort aendern.
-- Kassierer haben keinen Zugriff auf Nutzer-, Geraete- oder Produktverwaltung und koennen keine Rueckerstattungen ausloesen.
-
-## Android-App konfigurieren
-1. `android/gradle.properties` enthält Platzhalter:
-   - `BACKEND_BASE_URL=https://payment.lima11.de/`
-   - `LOCATION_ID=` (optional; wenn leer, holt die App die Stripe Terminal Location vom Backend)
-2. Für lokale Emulator-Tests gegen einen direkt gestarteten Backend-Prozess kannst du temporär `BACKEND_BASE_URL=http://10.0.2.2:4040/` in `android/local.properties` setzen.
-3. Alternativ kannst du in `android/local.properties` dieselben Keys setzen, sie überschreiben `gradle.properties`.
-4. Keine Secret Keys in der App; die App holt Connection Token & PaymentIntents ausschließlich vom Backend.
-
-5. Die App zeigt ihre Geraete-ID im Login- und Zahlungsbildschirm an; diese ID muss im Admin-Web einem Nutzer zugewiesen werden.
-6. Die Zahlung laeuft ueber das NFC-Modul des Android-Handys mit Stripe Tap to Pay. Es wird kein externes Terminal oder Kartenlesegeraet verbunden. Die Stripe Terminal Location kommt aus `LOCATION_ID` oder vom Backend-Endpunkt `/terminal/config`.
-7. Beim ersten Login meldet die App ihre Geraete-ID an das Backend; im Admin-Web kann diese ID einem Nutzer zugeordnet werden.
-8. Neben Produkten kann in der App ein freier Einmalbetrag mit Kurzbeschreibung in den Warenkorb gelegt und bezahlt werden.
+- `/` zeigt eine deutsche Landingpage mit Download-Link zur aktuellen Android-APK.
+- `/apk/latest` liefert die neueste Datei aus `artifacts/kassivo-*-release-signed.apk` oder dem alten Muster `artifacts/club-payment-*-release-signed.apk`.
+- `APK_DOWNLOAD_DIR` kann den Artefaktordner ueberschreiben.
 
 ## APK bauen
+
 ```bash
 cd android
-./gradlew :app:assembleDebug      # Debug APK
-./gradlew :app:assembleRelease    # Release (unsigned, falls keine Signatur konfiguriert)
+.\gradlew.bat :app:assembleDebug
+.\gradlew.bat :app:assembleRelease
 ```
-Vor jedem signierten APK-Build `versionCode` und `versionName` in `android/app/build.gradle.kts` erhoehen.
 
-Falls der Checkout in einem OneDrive-Ordner liegt und Gradle über ReparsePoint-/Dateisperren stolpert, kannst du Build-Artefakte lokal auslagern:
-```bash
-./gradlew :app:assembleDebug -PCLUB_PAYMENT_BUILD_DIR="$LOCALAPPDATA/CodexTools/club-payment-gradle-build"
-```
-Hinweis: Für Pull Requests erzeugt die GitHub-Actions-Pipeline automatisch eine Debug-APK als Artefakt.
+Vor jedem Build `versionCode` und `versionName` in `android/app/build.gradle.kts` erhoehen. Aktuelle Version: `1.0.16`.
 
-### Release signieren
-1. Keystore erstellen (einmalig):
-   ```bash
-   keytool -genkeypair -v -keystore clubpayment.keystore -alias clubpayment -keyalg RSA -keysize 2048 -validity 10000
-   ```
-2. In `android/app/build.gradle.kts` eine `signingConfig` für `release` ergänzen oder via `gradle.properties` Referenzen setzen.
-3. Danach: `./gradlew :app:assembleRelease`.
+Artefakte:
 
-### Artefakte
-- APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+- Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`
 - Release APK: `android/app/build/outputs/apk/release/app-release.apk`
-- Signierte PR-APK: `artifacts/club-payment-1.0.15-release-signed.apk`
-- AAB (optional): `./gradlew :app:bundleRelease` → `android/app/build/outputs/bundle/release/app-release.aab`
+- AAB fuer Google Play: `.\gradlew.bat :app:bundleRelease`
 
-## Hinweise zu Netzwerk & Sicherheit
-- Network Security Config erlaubt Klartext nur für lokale Emulator-Tests über `10.0.2.2/localhost`; die produktive Server-URL nutzt HTTPS.
-- R8/ProGuard ist für Release aktiviert; Stripe Terminal-Klassen werden per Rule erhalten.
-- Tap to Pay Flow ist nativ ueber das Stripe Terminal SDK implementiert (Connection Token vom Backend, PaymentIntent in-person/card_present, NFC direkt am Android-Handy).
-- NFC, Standort-Hardware und WLAN sind keine Installationsfilter mehr. Geraete ohne NFC koennen die App starten, erhalten aber einen Hinweis und koennen keine Tap-to-Pay-Zahlungen annehmen. Android 11 oder neuer bleibt erforderlich.
-- Auth-Persistenz-Entscheidung (Android): Bei aktivierter Option `Zugangsdaten merken` werden Benutzername und Passwort lokal in der App gespeichert und beim naechsten Login vorausgefuellt. Beim Abmelden bleibt diese Vorbelegung erhalten; Login ohne aktivierte Option loescht sie.
+## Tests
 
-## Stripe-Sprache fuer Belege
-- Stripe kann Belege, E-Mails und PDFs auf Deutsch lokalisieren, wenn im Stripe-Dashboard Deutsch als Sprache fuer Kunden-E-Mails/Belege gesetzt ist oder ein Stripe-Customer mit `preferred_locales=["de"]` verwendet wird.
-- Die App nutzt fuer Kartenzahlungen anonyme Terminal-PaymentIntents. Ohne Kundendatensatz oder E-Mail kann der von Stripe gehostete `receipt_url` nicht sicher pro Zahlung auf Deutsch erzwungen werden; hier greifen Stripe-Dashboard- und Browser-/Account-Einstellungen.
-- Wenn eine garantiert deutsche, eigene Quittungsseite benoetigt wird, sollte der QR-Code auf eine serverseitig erzeugte Club-Kasse-Quittung zeigen, die die benoetigten Stripe-Terminal-Belegdaten aus der API rendert.
+```bash
+backend\.venv\Scripts\python.exe -m pytest backend\tests -q
+```
 
-## Backend-API aus der App
-- `GET /api/app/latest` -> prueft die neueste signierte APK fuer den Update-Hinweis in der Android-App
-- `GET /terminal/config` → holt mit `Authorization: Bearer <token>` die Stripe Terminal Location fuer Tap to Pay
-- `POST /terminal/connection_token` → holt mit `Authorization: Bearer <token>` ein Connection Token für das Terminal SDK
-- `POST /pos/create_intent` → erzeugt PaymentIntent (EUR, card_present) mit Metadaten (`club`, `item`, `kassierer`, `device`)
+## Sicherheit
 
-Weitere Details je Ordner:
-- [backend/README.md](backend/README.md)
+- OV-Zugehoerigkeit wird immer aus dem authentifizierten Nutzer abgeleitet.
+- `organization_id` aus Requests wird fuer Zahlungsfluesse nicht vertraut.
+- Produkte, Geraete und Zahlungen werden pro OV gefiltert.
+- Stripe Secret Keys bleiben ausschliesslich im Backend.
+- Produktiv nur HTTPS verwenden.

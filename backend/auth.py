@@ -5,7 +5,7 @@ from typing import Optional
 from flask import Request
 
 from errors import APIError
-from users import Role, User, get_user_store
+from users import ADMIN_ROLES, User, get_user_store
 
 
 def _extract_bearer_token(auth_header: Optional[str]) -> str:
@@ -22,7 +22,7 @@ def authenticate_request(request: Request, require_admin: bool = False) -> User:
     store = get_user_store()
     user = store.get_by_token(token)
     if not user or not user.active:
-        raise APIError("Ungültiges oder inaktives Token", 401)
-    if require_admin and user.role != Role.ADMIN:
-        raise APIError("Nur Administratoren dürfen diese Aktion ausführen", 403)
+        raise APIError("Ungueltiges oder inaktives Token", 401)
+    if require_admin and user.role not in ADMIN_ROLES:
+        raise APIError("Nur Administratoren duerfen diese Aktion ausfuehren", 403)
     return user

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Admin Nutzerverwaltung</title>
+    <title>{{ app_name }} Nutzerverwaltung</title>
     <link rel="icon" href="{{ url_for('static', filename='club-payment-logo.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
   </head>
@@ -11,12 +11,13 @@
     <header class="topbar">
       <a class="brand" href="{{ url_for('admin_web_users') }}">
         <img class="brand-logo" src="{{ url_for('static', filename='club-payment-logo.svg') }}" alt="">
-        <span>Club Payment</span>
+        <span>{{ app_name }}</span>
       </a>
       <nav class="nav">
         <a class="nav-link active" href="{{ url_for('admin_web_users') }}">Nutzer &amp; Ger&auml;te</a>
         <a class="nav-link" href="{{ url_for('admin_web_products') }}">Produkte</a>
         <a class="nav-link" href="{{ url_for('admin_web_payments') }}">Zahlungen</a>
+        <a class="nav-link" href="{{ url_for('admin_web_stripe') }}">Stripe</a>
         <a class="nav-link" href="{{ url_for('admin_web_account') }}">Konto</a>
       </nav>
       <form method="post" action="{{ url_for('admin_web_logout') }}">
@@ -26,7 +27,7 @@
 
     <main class="page">
       <section class="page-heading">
-        <p class="eyebrow">Angemeldet als {{ admin_name }}</p>
+        <p class="eyebrow">Angemeldet als {{ admin_name }}{% if organization %} &middot; {{ organization.dok }}{% endif %}</p>
         <h1>Nutzerverwaltung</h1>
       </section>
 
@@ -48,7 +49,7 @@
             <label for="role">Rolle</label>
             <select id="role" name="role" required>
               <option value="kassierer">Kassierer</option>
-              <option value="admin">Admin</option>
+              <option value="ov_admin">OV-Admin</option>
             </select>
 
             <label class="checkline" for="active">
@@ -94,7 +95,7 @@
             <input name="password" type="password" autocomplete="new-password" placeholder="Neues Passwort">
             <select name="role" required>
               <option value="kassierer" {% if user.role.value == 'kassierer' %}selected{% endif %}>Kassierer</option>
-              <option value="admin" {% if user.role.value == 'admin' %}selected{% endif %}>Admin</option>
+              <option value="ov_admin" {% if user.role.value == 'ov_admin' %}selected{% endif %}>OV-Admin</option>
             </select>
             <label class="checkline">
               <input name="active" type="checkbox" {% if user.active %}checked{% endif %}>

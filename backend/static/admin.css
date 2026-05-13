@@ -119,6 +119,32 @@ h2 {
   padding: clamp(18px, 3vw, 24px);
 }
 
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.status-grid div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfdfb;
+}
+
 .grid {
   display: grid;
   gap: 18px;
@@ -329,6 +355,11 @@ td {
   table-layout: fixed;
 }
 
+.responsive-table {
+  min-width: 0;
+  table-layout: fixed;
+}
+
 .payments-table th,
 .payments-table td {
   overflow-wrap: anywhere;
@@ -494,6 +525,10 @@ td {
 
   .grid.two,
   .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .status-grid {
     grid-template-columns: 1fr;
   }
 }

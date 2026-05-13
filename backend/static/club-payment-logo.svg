@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
-  <title id="title">Club Payment</title>
+  <title id="title">Kassivo</title>
   <rect width="64" height="64" rx="16" fill="#0d5c46"/>
   <path fill="#f8faf7" d="M16 20c0-2.2 1.8-4 4-4h24c2.2 0 4 1.8 4 4v24c0 2.2-1.8 4-4 4H20c-2.2 0-4-1.8-4-4V20z"/>
   <path fill="#0d5c46" d="M21 25h22v6H21v-6zm0 11h12v6H21v-6z"/>
